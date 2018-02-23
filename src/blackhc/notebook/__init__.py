@@ -54,8 +54,7 @@ def get_cookiecutter_project_path(seed_path):
 
 
 def infer_and_set_project_dir():
-    set_project_dir(get_git_working_dir(os.getcwd()) or
-                    get_cookiecutter_project_path(os.getcwd()))
+    set_project_dir(get_git_working_dir(os.getcwd()) or get_cookiecutter_project_path(os.getcwd()))
 
 
 infer_and_set_project_dir()
