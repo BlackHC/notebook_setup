@@ -21,9 +21,8 @@ def set_project_dir(project_dir):
         print('Switched to directory %s' % project_dir)
 
 
-def infer_and_set_project_dir():
-    set_project_dir(get_git_working_dir(os.getcwd()) or
-                    get_cookiecutter_project_path(os.getcwd()))
+def get_src_path(project_dir):
+    return os.path.join(project_dir, 'src') if project_dir else None
 
 
 # Inspired by https://stackoverflow.com/questions/19687394/python-script-to-determine-if-a-directory-is-a-git-repository
@@ -50,12 +49,13 @@ def get_cookiecutter_project_path(seed_path):
 
     # Check if we are at the root. And there is a src subdirectory.
     if os.path.isdir(os.path.join(seed_path, 'src')):
-        return seed_path
+        return os.path.abspath(seed_path)
     return None
 
 
-def get_src_path(project_dir):
-    return os.path.join(project_dir, 'src') if project_dir else None
+def infer_and_set_project_dir():
+    set_project_dir(get_git_working_dir(os.getcwd()) or
+                    get_cookiecutter_project_path(os.getcwd()))
 
 
 infer_and_set_project_dir()
