@@ -89,5 +89,7 @@ setup(
         'test': ['coverage', 'pytest', 'pyfakefs==3.3'],
     },
 
-    setup_requires=[],
+    setup_requires=[
+        'pytest-runner',
+    ],
 )
