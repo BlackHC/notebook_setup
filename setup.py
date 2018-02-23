@@ -86,7 +86,7 @@ setup(
     # $ pip install -e .[dev,test]
     extras_require={
         'dev': ['check-manifest'],
-        'test': ['coverage', 'pytest', 'pyfakefs'],
+        'test': ['coverage', 'pytest', 'pyfakefs==3.3'],
     },
 
     setup_requires=[],
