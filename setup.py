@@ -29,20 +29,21 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='1.0',
+    version='1.0.2',
 
     description='Notebook setup code',
-    long_description=long_description,
+    # Fix windows newlines.
+    long_description=long_description.replace('\r\n', '\n'),
 
     # The project's main homepage.
     url='https://github.com/blackhc/notebook_setup',
 
     # Author details
-    author='Andreas Kirsch',
+    author='Andreas @blackhc Kirsch',
     author_email='blackhc+notebook_setup@gmail.com',
 
     # Choose your license
-    license='Apache',
+    license='MIT',
 
     # See https://pypi.python.org/pypi?%3Aaction=list_classifiers
     classifiers=[

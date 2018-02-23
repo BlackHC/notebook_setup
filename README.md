@@ -19,7 +19,7 @@ Right now 'useful stuff' is:
 To install using pip, use:
 
 ```
-pip install blackhc.mdp
+pip install blackhc.notebook
 ```
 
 To run the tests, use:
