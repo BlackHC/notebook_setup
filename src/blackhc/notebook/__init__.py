@@ -1,29 +1,29 @@
 import sys
 import os
 
-_project_dir = None
-_original_dir = None
+project_dir = None
+original_dir = None
 
-def set_project_dir(project_dir):
-    global _original_dir
-    global _project_dir
+def set_project_dir(new_project_dir):
+    global original_dir
+    global project_dir
 
-    if _project_dir:
-        old_src_path = get_src_path(_project_dir)
+    if project_dir:
+        old_src_path = get_src_path(project_dir)
         if old_src_path in sys.path:
             sys.path.remove(old_src_path)
-    _project_dir = project_dir
-    src_path = get_src_path(_project_dir)
+    project_dir = new_project_dir
+    src_path = get_src_path(project_dir)
     if src_path and src_path not in sys.path:
         sys.path.append(src_path)
         print('Appended %s to paths' % src_path)
 
-    if not _original_dir:
-        _original_dir = os.getcwd()
+    if not original_dir:
+        original_dir = os.getcwd()
 
-    if _project_dir:
-        os.chdir(project_dir)
-        print('Switched to directory %s' % project_dir)
+    if project_dir:
+        os.chdir(new_project_dir)
+        print('Switched to directory %s' % new_project_dir)
 
 
 def get_src_path(project_dir):
@@ -80,10 +80,6 @@ def is_run_from_ipython():
         return True
     except NameError:
         return False
-
-
-def get_original_dir():
-    return _original_dir
 
 
 # Only execute initialization if we are in ipython
