@@ -11,8 +11,8 @@ and get someuseful stuff in your jupyter notebooks.
 Right now 'useful stuff' is:
 
 * finds the project root and changes directory to that;
-* adds `$project_root/src` to the Python paths.
-
+* adds `$project_root/src` to the Python paths;
+* load the autoreload extension and set its mode to 2.
  
 ## Installation
 

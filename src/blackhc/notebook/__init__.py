@@ -2,10 +2,12 @@ import sys
 import os
 
 _project_dir = None
-
+_original_dir = None
 
 def set_project_dir(project_dir):
+    global _original_dir
     global _project_dir
+
     if _project_dir:
         old_src_path = get_src_path(_project_dir)
         if old_src_path in sys.path:
@@ -15,6 +17,9 @@ def set_project_dir(project_dir):
     if src_path and src_path not in sys.path:
         sys.path.append(src_path)
         print('Appended %s to paths' % src_path)
+
+    if not _original_dir:
+        _original_dir = os.getcwd()
 
     if _project_dir:
         os.chdir(project_dir)
@@ -57,4 +62,31 @@ def infer_and_set_project_dir():
     set_project_dir(get_git_working_dir(os.getcwd()) or get_cookiecutter_project_path(os.getcwd()))
 
 
-infer_and_set_project_dir()
+def echo_magic(magic):
+    from IPython import get_ipython
+    ipython = get_ipython()
+    print('%%%s' % magic)
+    ipython.magic(magic)
+
+
+def setup_autoreload():
+    echo_magic('load_ext autoreload')
+    echo_magic('autoreload 2')
+
+
+def is_run_from_ipython():
+    try:
+        __IPYTHON__
+        return True
+    except NameError:
+        return False
+
+
+def get_original_dir():
+    return _original_dir
+
+
+# Only execute initialization if we are in ipython
+if is_run_from_ipython():
+    infer_and_set_project_dir()
+    setup_autoreload()
