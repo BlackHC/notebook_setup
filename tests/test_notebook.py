@@ -9,6 +9,12 @@ def test_get_cookiecutter_project_path_from_notebooks(fs: fake_filesystem.FakeFi
         '/tmp/blackhc.notebook'))
 
 
+def test_get_cookiecutter_project_path_from_scripts(fs: fake_filesystem.FakeFilesystem):
+    fs.CreateDirectory('/tmp/blackhc.notebook/scripts')
+    assert (notebook.get_cookiecutter_project_path('/tmp/blackhc.notebook/notebooks') == os.path.abspath(
+        '/tmp/blackhc.notebook'))
+
+
 def test_get_cookiecutter_project_path_with_src(fs: fake_filesystem.FakeFilesystem):
     fs.CreateDirectory('/tmp/blackhc.notebook/src')
     assert (
