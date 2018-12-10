@@ -4,6 +4,7 @@ import os
 project_dir = None
 original_dir = None
 
+
 def set_project_dir(new_project_dir):
     global original_dir
     global project_dir

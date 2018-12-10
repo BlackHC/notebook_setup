@@ -1,6 +1,6 @@
 # Notebook setup package
 
-[![Build Status](https://travis-ci.org/BlackHC/mdp.svg?branch=master)](https://travis-ci.org/BlackHC/mdp)
+[![Build Status](https://travis-ci.org/BlackHC/notebook_setup.svg?branch=master)](https://travis-ci.org/BlackHC/notebook_setup)
 
 Idea is to
 ```
