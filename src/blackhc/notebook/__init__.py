@@ -1,5 +1,6 @@
 import sys
 import os
+import cgitb
 
 project_dir = None
 original_dir = None
@@ -83,11 +84,15 @@ def setup_autoreload():
 
 def is_run_from_ipython():
     try:
+        # noinspection PyUnresolvedReferences
         __IPYTHON__
         return True
     except NameError:
         return False
 
+
+# Enable better tracebacks
+cgitb.enable(format="text")
 
 infer_and_set_project_dir()
 
