@@ -11,12 +11,12 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 setup(
-    name='blackhc.notebook',
+    name='blackhc.project',
 
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='2.0.1',
+    version='2.1.0',
 
     description='Notebook setup code',
     # Fix windows newlines.
@@ -58,7 +58,7 @@ setup(
 
     # You can just specify the packages manually here if your project is
     # simple. Or you can use find_packages().
-    packages=['blackhc.notebook'],
+    packages=['blackhc.project'],
 
     package_dir={'': 'src'},
 

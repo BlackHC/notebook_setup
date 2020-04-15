@@ -1,26 +1,26 @@
 from pyfakefs import fake_filesystem
-from blackhc import notebook
+from blackhc import project
 import os
 
 
 def test_get_cookiecutter_project_path_from_notebooks(fs: fake_filesystem.FakeFilesystem):
-    fs.CreateDirectory('/tmp/blackhc.notebook/notebooks')
-    assert (notebook.get_cookiecutter_project_path('/tmp/blackhc.notebook/notebooks') == os.path.abspath(
-        '/tmp/blackhc.notebook'))
+    fs.CreateDirectory('/tmp/blackhc.project/notebooks')
+    assert (project.get_cookiecutter_project_path('/tmp/blackhc.project/notebooks') == os.path.abspath(
+        '/tmp/blackhc.project'))
 
 
 def test_get_cookiecutter_project_path_from_scripts(fs: fake_filesystem.FakeFilesystem):
-    fs.CreateDirectory('/tmp/blackhc.notebook/scripts')
-    assert (notebook.get_cookiecutter_project_path('/tmp/blackhc.notebook/notebooks') == os.path.abspath(
-        '/tmp/blackhc.notebook'))
+    fs.CreateDirectory('/tmp/blackhc.project/scripts')
+    assert (project.get_cookiecutter_project_path('/tmp/blackhc.project/notebooks') == os.path.abspath(
+        '/tmp/blackhc.project'))
 
 
 def test_get_cookiecutter_project_path_with_src(fs: fake_filesystem.FakeFilesystem):
-    fs.CreateDirectory('/tmp/blackhc.notebook/src')
+    fs.CreateDirectory('/tmp/blackhc.project/src')
     assert (
-        notebook.get_cookiecutter_project_path('/tmp/blackhc.notebook/') == os.path.abspath('/tmp/blackhc.notebook'))
+            project.get_cookiecutter_project_path('/tmp/blackhc.project/') == os.path.abspath('/tmp/blackhc.project'))
 
 
 def test_get_cookiecutter_project_path_without_src(fs: fake_filesystem.FakeFilesystem):
-    fs.CreateDirectory('/tmp/blackhc.notebook')
-    assert notebook.get_cookiecutter_project_path('/tmp/blackhc.notebook/') is None
+    fs.CreateDirectory('/tmp/blackhc.project')
+    assert project.get_cookiecutter_project_path('/tmp/blackhc.project/') is None

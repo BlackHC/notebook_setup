@@ -29,8 +29,12 @@ def set_project_dir(new_project_dir):
         sys.path.append(src_path)
         print('Appended %s to paths' % src_path)
 
-    os.chdir(new_project_dir)
-    print('Switched to directory %s' % new_project_dir)
+    switch_to_project_dir()
+
+
+def switch_to_project_dir():
+    os.chdir(project_dir)
+    print('Switched to directory %s' % project_dir)
 
 
 def get_src_path(project_dir):
@@ -91,11 +95,5 @@ def is_run_from_ipython():
         return False
 
 
-# Enable better tracebacks
-cgitb.enable(format="text")
-
-infer_and_set_project_dir()
-
-if is_run_from_ipython():
-    # Only execute auto_reload if we are in ipython
-    setup_autoreload()
+def enable_detailed_tracebacks():
+    cgitb.enable(format="text")
