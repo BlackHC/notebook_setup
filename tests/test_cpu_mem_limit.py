@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from toma import cpu_memory
+from blackhc.project.utils import cpu_memory
 
 
 @pytest.mark.forked
