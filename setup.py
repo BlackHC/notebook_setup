@@ -74,7 +74,7 @@ setup(
     # $ pip install -e .[dev,test]
     extras_require={
         'dev': ['check-manifest'],
-        'test': ['coverage', 'pytest', 'pyfakefs==3.3', 'torch'],
+        'test': ['coverage', 'pytest', 'pytest-forked', 'pyfakefs==3.3', 'torch'],
     },
 
     setup_requires=[
