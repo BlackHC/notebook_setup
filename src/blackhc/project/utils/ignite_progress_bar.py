@@ -1,4 +1,3 @@
-import torch.utils.data as data
 import ignite
 from blackhc.progress_bar import create_progress_bar
 
