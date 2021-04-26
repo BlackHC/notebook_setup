@@ -23,7 +23,7 @@ from laaos import TypeHandler
 import laaos
 
 # KEEP THIS AROUND TO SET THE DIRECTORY AUTOMAGICALLY
-import blackhc.project
+import blackhc.project.script
 
 import laaos
 

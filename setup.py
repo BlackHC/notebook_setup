@@ -16,11 +16,12 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='2.3.0',
+    version='2.3.1',
 
     description='Notebook setup code',
     # Fix windows newlines.
     long_description=long_description.replace('\r\n', '\n'),
+    long_description_content_type="text/markdown",
 
     # The project's main homepage.
     url='https://github.com/blackhc/notebook_setup',

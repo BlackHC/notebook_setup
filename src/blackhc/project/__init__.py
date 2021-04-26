@@ -86,13 +86,23 @@ def setup_autoreload():
     echo_magic('autoreload 2')
 
 
+_is_run_from_ipython = None
+
+
 def is_run_from_ipython():
+    global _is_run_from_ipython
+
+    if _is_run_from_ipython is not None:
+        return _is_run_from_ipython
+
     try:
         # noinspection PyUnresolvedReferences
         __IPYTHON__
-        return True
+        _is_run_from_ipython = True
     except NameError:
-        return False
+        _is_run_from_ipython = False
+
+    return _is_run_from_ipython
 
 
 def enable_detailed_tracebacks():
