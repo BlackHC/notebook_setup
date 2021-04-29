@@ -16,7 +16,7 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='2.3.1',
+    version='2.4.0',
 
     description='Notebook setup code',
     # Fix windows newlines.
@@ -59,7 +59,7 @@ setup(
 
     # You can just specify the packages manually here if your project is
     # simple. Or you can use find_packages().
-    packages=['blackhc.project'],
+    packages=['blackhc.project', 'blackhc.project.utils'],
 
     package_dir={'': 'src'},
 
@@ -67,7 +67,7 @@ setup(
     # your project is installed. For an analysis of "install_requires" vs pip's
     # requirements files see:
     # https://packaging.python.org/en/latest/requirements.html
-    install_requires=['gitpython', 'fs.sshfs', 'laaos', 'blackhc.progress_bar', 'psutil'],
+    install_requires=['gitpython', 'fs.sshfs', 'laaos'],
 
     # List additional groups of dependencies here (e.g. development
     # dependencies). You can install these using the following syntax,
@@ -75,7 +75,8 @@ setup(
     # $ pip install -e .[dev,test]
     extras_require={
         'dev': ['check-manifest'],
-        'test': ['coverage', 'pytest', 'pytest-forked', 'pyfakefs==3.3', 'torch'],
+        'test': ['coverage', 'pytest', 'pytest-forked', 'pyfakefs==3.3', 'torch', 'psutil', 'pytorch-ignite',
+                 'blackhc.progress_bar'],
     },
 
     setup_requires=[
