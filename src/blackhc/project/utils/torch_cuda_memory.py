@@ -7,7 +7,7 @@ import gc
 
 
 def gc_cuda():
-    """Gargage collect Torch (CUDA) memory."""
+    """Garbage collect Torch (CUDA) memory."""
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
