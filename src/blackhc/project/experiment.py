@@ -21,11 +21,11 @@ import typing
 from laaos import TypeHandler
 
 import laaos
+import laaos.torch
 
 # KEEP THIS AROUND TO SET THE DIRECTORY AUTOMAGICALLY
 import blackhc.project.script
 
-import laaos
 
 def get_likely_github_commit_url(github_url: str, commit):
     # "git@github.com:user/repo.git"
@@ -163,18 +163,6 @@ def embedded_experiments(script_file, num_jobs):
         job_id += num_workers
 
 
-class TensorHandler(TypeHandler):
-    def supports(self, obj):
-        return isinstance(obj, torch.Tensor)
-
-    def wrap(self, obj, wrap):
-        return obj.tolist()
-
-    def repr(self, obj, repr, store):
-        # This will never be called.
-        return repr(obj.tolist())
-
-
 def create_experiment_store(*, result_dir, store_name=None):
     # Make sure we have a directory to store the results in, and we don't crash!
     os.makedirs(result_dir, exist_ok=True)
@@ -183,13 +171,7 @@ def create_experiment_store(*, result_dir, store_name=None):
         safe_store_name,
         prefix=result_dir,
         truncate=False,
-        type_handlers=(
-            TensorHandler(),
-            laaos.Dataclasses2DictHandler(),
-            laaos.StrEnumHandler(),
-            laaos.Function2StrHandler(),
-            laaos.ToReprHandler(),
-        ),
+        type_handlers=laaos.torch.TypeHandlers + laaos.DefaultTypeHandlers,
     )
 
     store["timestamp"] = int(time.time())
