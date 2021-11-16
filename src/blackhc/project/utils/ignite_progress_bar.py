@@ -17,7 +17,7 @@ class IgniteProgressBar(object):
         dataloader = engine.state.dataloader
         self.progress_bar = create_progress_bar(len(dataloader))
 
-        print(self.desc(engine))
+        print(self.desc(engine) if callable(self.desc) else self.dec)
         self.progress_bar.start()
 
     def on_complete(self, engine):
