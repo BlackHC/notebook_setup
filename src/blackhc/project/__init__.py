@@ -21,20 +21,20 @@ def set_project_dir(new_project_dir):
     project_dir = new_project_dir
 
     if not project_dir:
-        print('Neither src found as subdirectory in %s nor was a notebooks directory found!')
+        print('Neither src found as subdirectory in %s nor was a notebooks directory found!' % original_dir, file=sys.stderr)
         return
 
     src_path = get_src_path(project_dir)
     if src_path not in sys.path:
         sys.path.append(src_path)
-        print('Appended %s to paths' % src_path)
+        print('Appended %s to paths' % src_path, file=sys.stderr)
 
     switch_to_project_dir()
 
 
 def switch_to_project_dir():
     os.chdir(project_dir)
-    print('Switched to directory %s' % project_dir)
+    print('Switched to directory %s' % project_dir, file=sys.stderr)
 
 
 def get_src_path(project_dir):
@@ -77,7 +77,7 @@ def infer_and_set_project_dir():
 def echo_magic(magic):
     from IPython import get_ipython
     ipython = get_ipython()
-    print('%%%s' % magic)
+    print('%%%s' % magic, file=sys.stderr)
     ipython.magic(magic)
 
 
