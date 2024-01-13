@@ -16,7 +16,7 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='2.6.0',
+    version='3.0.0',
 
     description='Notebook setup code',
     # Fix windows newlines.
@@ -49,9 +49,7 @@ setup(
         # Pick your license as you wish (should match "license" above)
         'License :: OSI Approved :: Apache Software License',
 
-        'Programming Language :: Python :: 3.3',
-        'Programming Language :: Python :: 3.4',
-        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.10',
     ],
 
     # What does your project relate to?
@@ -59,7 +57,7 @@ setup(
 
     # You can just specify the packages manually here if your project is
     # simple. Or you can use find_packages().
-    packages=['blackhc.project', 'blackhc.project.utils'],
+    packages=['blackhc.project', 'blackhc.project.utils', 'blackhc.project.utils.tests'],
 
     package_dir={'': 'src'},
 
@@ -72,11 +70,11 @@ setup(
     # List additional groups of dependencies here (e.g. development
     # dependencies). You can install these using the following syntax,
     # for example:
-    # $ pip install -e .[dev,test]
+    # $ pip install -e ".[dev,test]"
     extras_require={
         'dev': ['check-manifest'],
         'test': ['coverage', 'pytest', 'pytest-forked', 'pyfakefs==3.3', 'torch', 'psutil', 'pytorch-ignite',
-                 'blackhc.progress_bar'],
+                 'blackhc.progress_bar', 'wandb', 'prettyprinter', 'rich', 'markdownify', 'ipython'],
     },
 
     setup_requires=[

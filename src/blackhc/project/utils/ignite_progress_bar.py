@@ -1,5 +1,12 @@
-import ignite
-from blackhc.progress_bar import create_progress_bar
+try:
+    import ignite
+except ImportError:
+    raise ImportError("Package 'ignite' is not installed. Please install it using 'pip install pytorch-ignite'")
+
+try:
+    from blackhc.progress_bar import create_progress_bar
+except ImportError:
+    raise ImportError("Package 'blackhc.progress_bar' is not installed. Please install it using 'pip install blackhc.progress_bar'")
 
 
 class IgniteProgressBar(object):

@@ -49,7 +49,8 @@ def get_git_working_dir(path):
         return None
 
     try:
-        return git.Repo(path, search_parent_directories=True).working_tree_dir
+        repo = git.Repo(path, search_parent_directories=True)
+        return repo.working_tree_dir
     except git.exc.InvalidGitRepositoryError:
         return None
 
