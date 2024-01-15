@@ -1,4 +1,7 @@
-import psutil
+try:
+    import psutil
+except ImportError:
+    raise ImportError("Package 'psutil' is not installed. Please install it using 'pip install psutil'")
 
 
 def get_available_cpu_memory():
