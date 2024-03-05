@@ -27,3 +27,17 @@ To run the tests, use:
 ```
 python setup.py test
 ```
+
+## Build a new version
+
+```
+pip install build twine
+```
+
+```
+python -m build  
+```
+
+```
+twine upload dist/*
+```
