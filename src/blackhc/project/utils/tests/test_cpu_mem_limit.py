@@ -1,9 +1,15 @@
 import pytest
 import torch
+import platform
 
 from blackhc.project.utils import cpu_memory
 
 
+def is_apple_silicon():
+    return platform.machine() == 'arm64'
+
+
+@pytest.mark.skipif(is_apple_silicon(), reason="Apple Silicon")
 @pytest.mark.forked
 def test_cpu_mem_limit():
     # 128 MB (128/4M float32)

@@ -5,3 +5,5 @@
 *.egg-info/
 .ipynb_checkpoints/
 /.idea/
+/.eggs/
+__pycache__/
