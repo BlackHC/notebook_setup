@@ -38,7 +38,14 @@ def switch_to_project_dir():
 
 
 def get_src_path(project_dir):
-    return os.path.join(project_dir, 'src')
+    src_dir = os.path.join(project_dir, 'src')
+
+    # Check if the src dir exists
+    if os.path.isdir(src_dir):
+        return src_dir
+
+    # Otherwise, we might be in new-style project, so return the project dir
+    return project_dir
 
 
 # Inspired by https://stackoverflow.com/questions/19687394/python-script-to-determine-if-a-directory-is-a-git-repository
