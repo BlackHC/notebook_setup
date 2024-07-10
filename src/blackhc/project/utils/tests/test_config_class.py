@@ -5,14 +5,14 @@ from blackhc.project.utils.config_class import configclass
 
 
 @configclass
-class TestConfigClass:
+class DummyConfigClass:
     a: int
     b: str
     c: float
 
 
 def test_config_class():
-    config = TestConfigClass(a=1, b="2", c=3.0)
+    config = DummyConfigClass(a=1, b="2", c=3.0)
     assert config.a == 1
     assert config.b == "2"
     assert config.c == 3.0
@@ -23,7 +23,7 @@ def test_config_class():
 
 
 def test_config_class_conversions():
-    config = TestConfigClass(a=1, b="2", c=3.0)
+    config = DummyConfigClass(a=1, b="2", c=3.0)
 
     assert dict(config) == {"a": 1, "b": "2", "c": 3.0}
     assert list(config) == [1, "2", 3.0]
@@ -37,18 +37,18 @@ def test_config_class_conversions():
 def test_config_class_default_value():
     # throws exception if we don't pass c
     with pytest.raises(ValueError):
-        TestConfigClass(a=1, b="2")
+        DummyConfigClass(a=1, b="2")
 
-    TestConfigClass.c = 4.0
+    DummyConfigClass.c = 4.0
 
-    config = TestConfigClass(a=1, b="2")
+    config = DummyConfigClass(a=1, b="2")
 
     assert config.c == 4.0
 
 
 def test_config_class_merge_via_or():
-    config = TestConfigClass(a=1, b="2", c=3.0)
-    config2 = TestConfigClass(a=2, b="3", c=4.0)
+    config = DummyConfigClass(a=1, b="2", c=3.0)
+    config2 = DummyConfigClass(a=2, b="3", c=4.0)
 
     config3 = config | config2
 
@@ -65,7 +65,7 @@ def test_config_class_merge_via_or():
 
 
 def test_config_class_unpacking():
-    config = TestConfigClass(a=1, b="2", c=3.0)
+    config = DummyConfigClass(a=1, b="2", c=3.0)
 
     a, b, c = config
 
@@ -78,7 +78,7 @@ def test_config_class_unpacking():
 
 def test_config_class_invoke():
     @configclass
-    class TestConfigClass:
+    class DummyConfigClass:
         a: int
         b: str
         c: float
@@ -86,14 +86,14 @@ def test_config_class_invoke():
     def func(a, b, c):
         return a, b, c
 
-    config = TestConfigClass(a=1, b="2", c=3.0)
+    config = DummyConfigClass(a=1, b="2", c=3.0)
     result = config.invoke(func)
     assert result == (1, "2", 3.0)
 
 
 def test_config_class_invoke_kwargs():
     @configclass
-    class TestConfigClass:
+    class DummyConfigClass:
         a: int
         b: str
         c: float
@@ -101,6 +101,6 @@ def test_config_class_invoke_kwargs():
     def func(**kwargs):
         return kwargs["a"], kwargs["b"], kwargs["c"]
 
-    config = TestConfigClass(a=1, b="2", c=3.0)
+    config = DummyConfigClass(a=1, b="2", c=3.0)
     result = config.invoke(func)
     assert result == (1, "2", 3.0)

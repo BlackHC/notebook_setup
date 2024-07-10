@@ -28,7 +28,7 @@ To run the tests, use:
 python setup.py test
 ```
 
-## Build a new version
+## Build and publish a new version
 
 ```
 pip install build twine

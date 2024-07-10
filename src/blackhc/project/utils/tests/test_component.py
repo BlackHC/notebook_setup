@@ -1,7 +1,12 @@
 """
 Component tests.
 """
-from blackhc.project.utils.component import *
+import typing
+from dataclasses import dataclass
+from blackhc.project.utils.component import Interface, Component, ComponentView
+
+
+T = typing.TypeVar("T")
 
 
 class InterfaceA(Interface):

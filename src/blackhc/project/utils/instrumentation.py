@@ -1,3 +1,27 @@
+"""
+Instrumentation Module
+
+This module provides utilities for instrumenting code to collect and manage runtime data.
+It offers a flexible and thread-safe way to record, organize, and transform instrumentation
+data across different scopes of execution.
+
+Key components:
+- Context: A dict-like class for storing and manipulating instrumentation data
+- Instrumentation: A class that manages the collection and scoping of instrumentation data
+- NullInstrumentation: A no-op version of Instrumentation for when instrumentation is disabled
+
+Usage:
+```
+    from blackhc.project.utils.instrumentation import instrumentation
+
+    with instrumentation.collect() as run_info:
+        instrumentation.log(metric="value")
+        with instrumentation.scope("subscope"):
+            instrumentation.log(another_metric="another_value")
+```
+
+The module also supports disabling instrumentation via the NO_INSTRUMENTATION environment variable.
+"""
 import contextlib
 import os
 import threading

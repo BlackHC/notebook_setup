@@ -1,7 +1,17 @@
 """
-Component class to make it easy to create component based classes.
+Component class to make it easy to create component-based classes.
 
-(This can allow for more robust code that can be iterated a lot.)
+This module provides a flexible and robust way to implement component-based
+architecture in Python. It includes utilities for interface definition,
+component implementation, and protocol casting.
+
+Key features:
+1. Interface and Component protocols for defining component contracts
+2. Explicit casting functions for type-safe component interactions
+3. ComponentView for adapting interfaces
+4. ProtocolWrapper for wrapping existing objects with component functionality
+
+See test_component.py for usage examples.
 """
 import typing
 from dataclasses import dataclass

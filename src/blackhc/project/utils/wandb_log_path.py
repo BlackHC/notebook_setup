@@ -1,3 +1,23 @@
+"""
+Weights & Biases (wandb) Integration for Logging with XPath
+
+This module provides utility functions and context managers to integrate
+Weights & Biases (wandb) logging with a custom XPath logging system. It
+offers convenient wrappers around wandb functions to log metrics, define
+custom steps, and manage the logging hierarchy.
+
+Key features:
+- Custom step management with `wandb_step`
+- Metric logging with automatic path handling
+- Support for summary and non-summary metrics
+- Integration with an XPath-based logging system
+
+Dependencies:
+- wandb
+- blackhc.project.utils.log_path (xpath)
+
+Note: This module requires the 'wandb' package to be installed.
+"""
 import functools
 from contextlib import contextmanager
 
@@ -10,7 +30,7 @@ from blackhc.project.utils.log_path import xpath
 
 
 @contextmanager
-def wandb_custom_step(name):
+def wandb_step(name):
     """
     A context manager for wandb steps.
 

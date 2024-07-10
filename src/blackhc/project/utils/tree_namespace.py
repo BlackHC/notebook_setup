@@ -1,3 +1,48 @@
+"""
+This module provides a TreeNamespace class and related utility functions for working with
+hierarchical data structures.
+
+The TreeNamespace class allows for easy manipulation and access of nested dictionary-like
+structures using dot notation and path-based indexing. It supports wildcards for flexible
+querying of the data structure.
+
+Key components:
+- TreeNamespace: Main class for representing and interacting with tree-like data structures.
+- get_generic_type: Function to determine the generic type of an object.
+- keys, values, items: Functions to access elements of TreeNamespace and other iterable objects.
+- schema: Function to generate a schema representation of a TreeNamespace or other objects.
+
+This module also includes pretty-printing support for TreeNamespace objects using the
+prettyprinter library.
+
+Usage example:
+```
+    from blackhc.project.utils.tree_namespace import TreeNamespace, schema
+
+    data = {
+        "user/profile/name": "Alice",
+        "user/profile/age": 30,
+        "user/settings/theme": "dark",
+        "posts/0/title": "First Post",
+        "posts/1/title": "Second Post",
+    }
+
+    tree = TreeNamespace(data)
+
+    # Access nested data using dot notation
+    print(tree.user.profile.name)  # Output: Alice
+
+    # Use wildcards to access multiple items
+    post_titles = tree["posts/*/title"]
+    print(post_titles["0"])  # Output: First Post
+
+    # Get schema of the tree
+    tree_schema = schema(tree)
+    print(tree_schema.user.profile.age)  # Output: <class 'int'>
+```
+
+Note: This module requires the 'prettyprinter' package to be installed.
+"""
 import re
 import typing
 from typing import Any

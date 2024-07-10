@@ -9,7 +9,7 @@ from blackhc.project.utils.wandb_log_path import (
     define_metric,
     log,
     log_metric,
-    wandb_custom_step,
+    wandb_step,
 )
 
 
@@ -26,8 +26,8 @@ def reset_xpath_state():
 def test_integration_wandb_log_path():
     run = wandb.init(project="dummy_project", mode="online")
 
-    # Test wandb_custom_step
-    with wandb_custom_step("test_step"):
+    # Test wandb_step
+    with wandb_step("test_step"):
         assert xpath.current_step_name == "test_step"
         assert xpath.current_step_index == 0
 
@@ -58,8 +58,8 @@ def test_wandb_log_path():
 
         assert xpath.path_separator == "/"
 
-        # Test wandb_custom_step
-        with wandb_custom_step("test_step"):
+        # Test wandb_step
+        with wandb_step("test_step"):
             wandb.define_metric.assert_called_with("test_step/*", "test_step/step")
 
             assert xpath.current_step_name == "test_step"

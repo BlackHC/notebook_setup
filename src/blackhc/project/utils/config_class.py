@@ -1,5 +1,66 @@
 """
-A simple decorator around dataclass that makes it easier to create config classes.
+config_class.py: Enhanced Configuration Classes for Python
+
+This module provides a `configclass` decorator that extends Python's dataclasses
+with additional functionality for creating flexible and powerful configuration classes.
+
+Key features:
+- Easy creation of configuration classes with default values
+- Dict-like access and iteration over fields
+- Merging of configuration classes using the | operator
+- Automatic initialization from keyword arguments
+- Support for default values, default factories, and required fields
+- Invocation of functions with config class fields
+
+The `configclass` decorator wraps around the standard dataclass decorator,
+adding custom methods for initialization, iteration, and dict-like operations.
+
+Usage:
+```
+    from blackhc.project.utils.config_class import configclass
+    import dataclasses
+
+    @configclass
+    class MyConfig:
+        required_field: int
+        string_field: str = "default"
+        list_field: list = dataclasses.field(default_factory=list)
+        class_default: float = 3.14
+
+    # Basic usage
+    config = MyConfig(required_field=1)
+    print(config)  # MyConfig(required_field=1, string_field='default', list_field=[], class_default=3.14)
+
+    # Dict-like access
+    print(config['required_field'])  # 1
+    print(config.get('string_field'))  # 'default'
+
+    # Iteration
+    for value in config:
+        print(value)  # Prints: 1, 'default', [], 3.14
+
+    # Dict conversion
+    config_dict = dict(config)
+    print(config_dict)  # {'required_field': 1, 'string_field': 'default', 'list_field': [], 'class_default': 3.14}
+
+    # Merging configs
+    other_config = MyConfig(required_field=2, string_field="new")
+    merged_config = config | other_config
+    print(merged_config)  # MyConfig(required_field=2, string_field='new', list_field=[], class_default=3.14)
+
+    # Invoking functions with config
+    def print_config(required_field, string_field, list_field, class_default):
+        print(f"Fields: {required_field}, {string_field}, {list_field}, {class_default}")
+
+    config.invoke(print_config)  # Prints: Fields: 1, default, [], 3.14
+
+    # Changing class-level defaults
+    MyConfig.class_default = 2.718
+    new_config = MyConfig(required_field=3)
+    print(new_config.class_default)  # 2.718
+```
+
+For more details, see the docstring of the `configclass` decorator.
 """
 import dataclasses
 import functools

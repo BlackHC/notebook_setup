@@ -136,10 +136,11 @@ def test_xpath_summary_step():
             assert xpath.current_step_name == "outer/inner"
             assert xpath.current_unique_path == "outer/inner"
             assert xpath.metric_name("metric") == "outer/inner/metric"
-        with xpath.step("inner"):
-            assert xpath.current_step_name == "outer/inner+1"
-            assert xpath.current_unique_path == "outer/inner+1"
-            assert xpath.metric_name("metric") == "outer/inner+1/metric"
+        with pytest.warns(UserWarning):
+            with xpath.step("inner"):
+                assert xpath.current_step_name == "outer/inner+1"
+                assert xpath.current_unique_path == "outer/inner+1"
+                assert xpath.metric_name("metric") == "outer/inner+1/metric"
         assert xpath.current_step_name == "outer"
         assert xpath.current_unique_path == "outer"
         assert xpath.metric_name("metric") == "outer/metric"

@@ -1,5 +1,39 @@
 """
 Logging execution paths to make it easy to create nested paths for logging and debugging.
+
+This module provides a `LogPath` class (aliased as `xpath`) that allows for hierarchical
+logging of execution paths. It's particularly useful for creating nested paths for
+logging and debugging in complex applications.
+
+Key features:
+- Create nested execution steps with unique identifiers
+- Track summary steps separately from regular steps
+- Automatically measure and record execution time for each step
+- Generate unique metric names based on the current execution path
+- Maintain statistics for step execution times
+
+Usage:
+```
+    from blackhc.project.utils.log_path import xpath
+
+    with xpath.step("main_process"):
+        # Do some work
+        with xpath.step("sub_process"):
+            # Do sub-process work
+            metric_name = xpath.metric_name("accuracy")
+            # Log metric_name with your logging system
+
+    # Access statistics
+    print(xpath.all_step_names)
+    print(xpath.all_step_stats)
+```
+
+Classes:
+    LogPathStep: Represents a single step in the execution path
+    LogPathNodeStats: Stores statistics for a specific step
+    LogPath: Main class for managing the execution path and logging
+
+Note: This module uses ContextVar for thread-safe context management.
 """
 import dataclasses
 import warnings
