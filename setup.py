@@ -57,7 +57,16 @@ setup(
     # your project is installed. For an analysis of "install_requires" vs pip's
     # requirements files see:
     # https://packaging.python.org/en/latest/requirements.html
-    install_requires=["gitpython", "fs.sshfs", "laaos"],
+    install_requires=[
+        "gitpython",
+        "fs.sshfs",
+        "laaos",
+        "toolz",  # Functional programming
+        "fn",  # Functional programming
+        # See https://x.com/BlackHC/status/1780995421852127477.
+        "jupyter_client<8.0.0",  # This fixes issues with jupyter_client <-> pyzmq
+        "pyzmq<25",  # This fixes issues with jupyter_client <-> pyzmq
+    ],
     # List additional groups of dependencies here (e.g. development
     # dependencies). You can install these using the following syntax,
     # for example:
@@ -78,11 +87,6 @@ setup(
             "rich",
             "markdownify",
             "ipython",
-            "toolz", # Functional programming
-            "fn", # Functional programming
-            # See https://x.com/BlackHC/status/1780995421852127477.
-            "jupyter_client<8.0.0", # This fixes issues with jupyter_client <-> pyzmq
-            "pyzmq<25", # This fixes issues with jupyter_client <-> pyzmq
         ],
     },
     setup_requires=[
