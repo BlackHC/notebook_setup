@@ -1,6 +1,7 @@
 """
 Simple file-based object storage.
 """
+import enum
 import functools
 import inspect
 import json
@@ -39,19 +40,23 @@ def get_callable_full_name(f: typing.Callable):
 
 
 def escape_path_part(part: str):
-    return urllib.parse.quote(part, safe=" ")
+    return urllib.parse.quote(part, safe=" +(,){:}")
 
 
 def arg_to_path_fragment(value: float | str | int | list[float | int | str]) -> str:
     """Convert a value to a path part."""
+    # Convert to simpler types if possible.
     if isinstance(value, float) and value.is_integer():
         value = int(value)
+    elif isinstance(value, enum.Enum):
+        value = value.value if isinstance(value.value, str) else value.name
+    
     if isinstance(value, float):
         value = format(
             value, ".6g"
         )  # Use general format with up to 6 significant digits
     elif isinstance(value, list):
-        value = "[" + ",".join(map(arg_to_path_fragment, value)) + "]"
+        value = "+".join(map(arg_to_path_fragment, value))
     elif isinstance(value, tuple):
         value = "(" + ",".join(map(arg_to_path_fragment, value)) + ")"
     elif isinstance(value, dict):
@@ -72,7 +77,7 @@ def arg_to_path_fragment(value: float | str | int | list[float | int | str]) -> 
     return escape_path_part(str(value))
 
 
-def kwargs_to_fragment(kwargs: dict, incl_keys: bool = True):
+def kwargs_to_path_fragment(kwargs: dict, incl_keys: bool = True):
     kwarg_fragments = []
     for key in sorted(kwargs.keys()):
         if incl_keys:
@@ -98,7 +103,7 @@ def generate_path(*parts) -> str:
         if part is None:
             fragment = ''
         elif isinstance(part, dict):
-            fragment = kwargs_to_fragment(part)
+            fragment = kwargs_to_path_fragment(part)
         else:
             fragment = arg_to_path_fragment(part)
         if fragment != '':
@@ -253,7 +258,7 @@ def cache(f=None, *, prefix_args: list[str], root:str, force_format:typing.Liter
         bound_args.apply_defaults()
         
         # Extract prefix args into one dictionary and all other args into another
-        prefix_dict = {arg: bound_args.arguments[arg] for arg in bound_args.arguments if arg in prefix_args}
+        prefix_dict = {arg: bound_args.arguments[arg] for arg in prefix_args}
         suffix_dict = {arg: bound_args.arguments[arg] for arg in bound_args.arguments if arg not in prefix_args}
         
         # Generate the prefix path

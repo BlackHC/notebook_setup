@@ -2,7 +2,33 @@ from pyfakefs import fake_filesystem
 from blackhc.project.utils import simple_storage
 import os
 import pytest
+import enum
 
+
+def test_arg_to_path_fragment():
+    assert simple_storage.arg_to_path_fragment(123) == "123"
+    assert simple_storage.arg_to_path_fragment(123.456) == "123.456"
+    assert simple_storage.arg_to_path_fragment("test_string") == "test_string"
+    assert simple_storage.arg_to_path_fragment([1, 2, 3]) == "1+2+3"
+    assert simple_storage.arg_to_path_fragment((1, 2, 3)) == "(1,2,3)"
+    assert simple_storage.arg_to_path_fragment({"key": "value"}) == "{key:value}"
+    assert simple_storage.arg_to_path_fragment(123.0) == "123"
+    assert simple_storage.arg_to_path_fragment(["a", "b", "c"]) == "a+b+c"
+    assert simple_storage.arg_to_path_fragment({"a": 1, "b": 2}) == "{a:1,b:2}"
+
+    class TestEnum(enum.Enum):
+        OPTION_A = "OptionA"
+        OPTION_B = "OptionB"
+
+    assert simple_storage.arg_to_path_fragment(TestEnum.OPTION_A) == "OptionA"
+    assert simple_storage.arg_to_path_fragment(TestEnum.OPTION_B) == "OptionB"
+def test_arg_to_path_fragment_with_int_enum():
+    class IntEnum(enum.Enum):
+        OPTION_1 = 1
+        OPTION_2 = 2
+
+    assert simple_storage.arg_to_path_fragment(IntEnum.OPTION_1) == "OPTION_1"
+    assert simple_storage.arg_to_path_fragment(IntEnum.OPTION_2) == "OPTION_2"
 
 def test_save_and_load_pkl(fs: fake_filesystem.FakeFilesystem):
     test_obj = {"key": "value"}
