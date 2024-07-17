@@ -61,6 +61,7 @@ setup(
         "gitpython",
         "fs.sshfs",
         "laaos",
+        "jsonpickle",
         "toolz",  # Functional programming
         # See https://x.com/BlackHC/status/1780995421852127477.
         "jupyter_client<8.0.0",  # This fixes issues with jupyter_client <-> pyzmq

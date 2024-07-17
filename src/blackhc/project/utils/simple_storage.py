@@ -5,6 +5,7 @@ import enum
 import functools
 import inspect
 import json
+import jsonpickle
 import os
 import pickle
 import sys
@@ -13,6 +14,7 @@ import urllib.parse
 
 from datetime import datetime
 
+import blackhc.project
 from blackhc.project.experiment import get_git_head_commit_and_url
 
 
@@ -146,9 +148,10 @@ def _combine_path(prefix_path, ext) -> str:
 def _save_metadata(*parts, root: str = "") -> str:
     prefix_path = get_prefix_path(*parts, root=root)
     metadata = collect_metadata(*parts)
+    metadata_string = jsonpickle.encode(metadata, unpicklable=False)
     os.makedirs(os.path.dirname(prefix_path), exist_ok=True)
     with open(_combine_path(prefix_path, "meta.json"), "wt", encoding="utf-8") as f:
-        json.dump(metadata, f)
+        f.write(metadata_string)
     return prefix_path
 
 
@@ -246,14 +249,18 @@ def load(*parts, root: str = ""):
         raise FileNotFoundError("No data file found for the prefix path", prefix_path)
 
 
-def cache(f=None, *, prefix_args: list[str], root:str, force_format:typing.Literal["json", "pkl", "pt"] | None = None):
+def cache(f=None, *, prefix_args: list[str]=[], root:str=None, force_format:typing.Literal["json", "pkl", "pt"] | None = None):
     if f is None:
         return functools.partial(cache, prefix_args=prefix_args, root=root, force_format=force_format)
+    
+    if root is None:
+        root = os.path.join(blackhc.project.project_dir, "cache")
+        
+    sig = inspect.signature(f)
     
     @functools.wraps(f)
     def f_get_prefix_path(*args, **kwargs):
          # Apply defaults
-        sig = inspect.signature(f)
         bound_args = sig.bind(*args, **kwargs)
         bound_args.apply_defaults()
         
@@ -268,7 +275,6 @@ def cache(f=None, *, prefix_args: list[str], root:str, force_format:typing.Liter
     @functools.wraps(f)
     def f_load(*args, **kwargs):
         # Apply defaults
-        sig = inspect.signature(f)
         bound_args = sig.bind(*args, **kwargs)
         bound_args.apply_defaults()
         
@@ -285,12 +291,13 @@ def cache(f=None, *, prefix_args: list[str], root:str, force_format:typing.Liter
             raise FileNotFoundError("No subdirectories found in the prefix path", prefix_path)
         latest_subdir = subdirs[-1]
         latest_subdir_path = os.path.join(prefix_path, latest_subdir)
-        return load(root=latest_subdir_path)
+        result = load(root=latest_subdir_path)
+        print(f"📦 Loaded from cache in {latest_subdir_path}")
+        return result
     
     @functools.wraps(f)
     def f_recompute(*args, **kwargs):
         # Apply defaults
-        sig = inspect.signature(f)
         bound_args = sig.bind(*args, **kwargs)
         bound_args.apply_defaults()
         
@@ -317,20 +324,24 @@ def cache(f=None, *, prefix_args: list[str], root:str, force_format:typing.Liter
             case _:
                 raise ValueError(f"Unsupported force_format: {force_format}")
             
-        save_fn(result, prefix_dict, get_callable_full_name(f), suffix_dict, timestamp, None, root=root)
-        
+        prefix_path = save_fn(result, prefix_dict, get_callable_full_name(f), suffix_dict, timestamp, None, root=root)
+        print(f"📦 Cached result in {prefix_path}")
         return result
     
     @functools.wraps(f)
-    def f_wrapper(*args, **kwargs):
-        try:
-            result = f_load(*args, **kwargs)
-            return result
-        except FileNotFoundError:
-            pass
-        
+    def f_wrapper(*args, __force_refresh: bool = False, **kwargs):
+        if not __force_refresh:
+            try:
+                result = f_load(*args, **kwargs)
+                return result
+            except FileNotFoundError:
+                pass
+            
         return f_recompute(*args, **kwargs)
-        
+    
+    new_sig = sig.replace(parameters=[*sig.parameters.values(), inspect.Parameter(name="__force_refresh", kind=inspect.Parameter.KEYWORD_ONLY, default=False)])
+    f_wrapper.__signature__ = new_sig
+    
     f_wrapper.get_prefix_path = f_get_prefix_path
     f_wrapper.load = f_load
     f_wrapper.recompute = f_recompute
