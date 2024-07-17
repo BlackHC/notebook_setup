@@ -87,7 +87,7 @@ def value_to_path_fragment(
     return escape_path_part(str(value))
 
 
-def dict_to_path_fragment(kwargs: dict, incl_keys: bool = True):
+def dict_to_path_fragment(kwargs: dict):
     """Convert a dictionary of keyword arguments to a path fragment.
 
     Args:
@@ -97,13 +97,17 @@ def dict_to_path_fragment(kwargs: dict, incl_keys: bool = True):
         str: The path fragment.
     """
     kwarg_fragments = []
-    for key, value in sorted(kwargs.items()):
-        if key is not None and incl_keys:
+    for key, value in kwargs.items():
+        if key is not None:
             kwarg_fragments.append(f"{key}:{value_to_path_fragment(value)}")
         else:
             kwarg_fragments.append(f"{value_to_path_fragment(value)}")
     return "_".join(kwarg_fragments)
 
+
+def list_to_path_fragment(args: list):
+    """Convert a list of arguments to a path fragment."""
+    return "_".join(map(value_to_path_fragment, args))
 
 def generate_path(*parts) -> str:
     """
@@ -122,6 +126,8 @@ def generate_path(*parts) -> str:
             fragment = ""
         elif isinstance(part, dict):
             fragment = dict_to_path_fragment(part)
+        elif isinstance(part, list):
+            fragment = list_to_path_fragment(part)
         else:
             fragment = value_to_path_fragment(part)
         if fragment != "":
@@ -367,23 +373,23 @@ def load(
 
 
 @dataclass
-class PartSchemaLiteral:
+class PartLiteral:
     """A literal part of the path."""
 
     value: str
 
 
 @dataclass
-class PartSchemaKW:
+class PartKW:
     """A literal keyword argument part of the path."""
 
     key: str
     value: str
 
 
-class PartSchemaIdentifier:
+class PartIdentifier:
     """The identifier part of the path, which gets filled in by the identifier argument."""
-
+    
     pass
 
 
@@ -405,35 +411,60 @@ def part_schema(*schema_parts: list):
 
         And creates "{root}/fixed_dataset/arg1:{arg1}_split:test_arg2:arg{2}" as prefix path (excl timestamps).
     """
-
+    
     def params_to_parts(bound_arguments: dict, identifier: str) -> list[str]:
         """Convert a list of arguments and a dictionary of keyword arguments to a list of path parts using the given schema."""
+        def missing_arg_error(arg):
+            raise ValueError(
+                "Missing schema arg:",
+                arg,
+                " in ",
+                schema_parts,
+                " for ",
+                bound_arguments,
+                "(or use $identifier for the identifier"
+                "or PartSchemaLiteral or PartSchemaKW for literal parts)."
+            )
+        
         parts = []
         for schema_part in schema_parts:
-            if isinstance(schema_part, PartSchemaLiteral):
+            if isinstance(schema_part, PartLiteral):
                 part = schema_part.value
-            elif isinstance(schema_part, PartSchemaKW):
+            elif isinstance(schema_part, PartKW):
                 part = {schema_part.key: schema_part.value}
-            elif schema_part == PartSchemaIdentifier:
+            elif schema_part == PartIdentifier or schema_part == "$identifier":
                 part = identifier
-            elif isinstance(schema_part, (tuple, list)):
+            elif isinstance(schema_part, str):
+                if schema_part in bound_arguments:
+                    part = bound_arguments[schema_part]
+                else:
+                    missing_arg_error(schema_part)
+            elif isinstance(schema_part, (set, tuple)):
                 part = {}
                 for arg in schema_part:
-                    if isinstance(arg, PartSchemaLiteral):
+                    if isinstance(arg, PartLiteral):
+                        if None in part:
+                            raise ValueError("Multiple PartLiteral (or Identifier) not allowed in set schema parts")
                         part[None] = arg.value
-                    elif isinstance(arg, PartSchemaKW):
+                    elif isinstance(arg, PartKW):
                         part[arg.key] = arg.value
+                    elif arg == PartIdentifier or arg == "$identifier":
+                        part[None] = identifier
                     elif arg in bound_arguments:
                         part[arg] = bound_arguments[arg]
                     else:
-                        raise ValueError(
-                            "Invalid schema arg:",
-                            arg,
-                            " in ",
-                            schema_parts,
-                            " for ",
-                            bound_arguments,
-                        )
+                        missing_arg_error(schema_part)
+            elif isinstance(schema_part, list):
+                part = []
+                for arg in schema_part:
+                    if isinstance(arg, PartLiteral):
+                        part.append(arg.value)
+                    elif arg in bound_arguments:
+                        part.append(bound_arguments[arg])
+                    elif isinstance(arg, PartKW):
+                        raise ValueError("PartKW is not allowed in list schema parts")
+                    else:
+                        missing_arg_error(schema_part)
             else:
                 raise ValueError("Invalid schema part:", schema_part)
             parts.append(part)
@@ -442,33 +473,68 @@ def part_schema(*schema_parts: list):
     return params_to_parts
 
 
-def prefix_schema(prefix_args: list[str]) -> typing.Callable[[dict, dict], list[str]]:
+def prefix_schema(*prefix_args: list[str]) -> typing.Callable[[dict, dict], list[str]]:
     """Build a path schema from a list of prefix arguments.
+    
+    Any "/" in the prefix args is treated as a separator between different parts of the path.
 
     Example:
-        schema = prefix_schema(["arg1", "arg2"])
+        schema = prefix_schema(["arg1", "/" "arg2"])
         parts = schema({"arg1": "value1", "arg2": "value2", "arg3": "value3"}, "test_id")
         assert parts == [
-            {"arg1": "value1", "arg2": "value2"},
+            {"arg1": "value1"}, 
+            {"arg2": "value2"},
             "test_id",
             {"arg3": "value3"}
         ]
 
-        And creates "{root}/arg1:{arg1}_arg2:arg{2}/test_id/arg3:value3" as prefix path (excl timestamps).
+        And creates "{root}/arg1:{arg1}/arg2:arg{2}/test_id/arg3:value3" as prefix path (excl timestamps).
     """
 
     def params_to_parts(bound_arguments: dict, identifier: str) -> list[str]:
         """Build a path using prefix args, identifier, and remaining args."""
-        assert set(prefix_args) <= set(
-            bound_arguments
-        ), f"Missing prefix args: {set(prefix_args) - set(bound_arguments)}"
-        prefix_dict = {arg: bound_arguments[arg] for arg in prefix_args}
+        parts = []
+        prefix_dict = {}
+        used_args = set()
+        for arg in prefix_args:
+            if arg == "/":
+                if prefix_dict:
+                    parts.append(prefix_dict)
+                    prefix_dict = {}
+            elif isinstance(arg, str):
+                prefix_dict[arg] = bound_arguments[arg]
+                used_args.add(arg)
+            elif isinstance(arg, (set, tuple)):
+                if prefix_dict:
+                    parts.append(prefix_dict)
+                    prefix_dict = {}
+                for key in arg:
+                    prefix_dict[key] = bound_arguments[key]
+                    used_args.add(key)
+                parts.append(prefix_dict)
+                prefix_dict = {}
+            elif isinstance(arg, list):
+                if prefix_dict:
+                    parts.append(prefix_dict)
+                    prefix_dict = {}
+                
+                prefix_list = []
+                for key in arg:
+                    prefix_list.append(bound_arguments[key])
+                    used_args.add(key)
+                parts.append(prefix_list)
+            else:
+                raise ValueError(f"Invalid prefix arg: {arg}")
+        if prefix_dict:
+            parts.append(prefix_dict)
+        parts.append(identifier)
         suffix_dict = {
             arg: bound_arguments[arg]
             for arg in bound_arguments
-            if arg not in prefix_args
+            if arg not in used_args
         }
-        return [prefix_dict, identifier, suffix_dict]
+        parts.append(suffix_dict)
+        return parts
 
     return params_to_parts
 
@@ -498,7 +564,7 @@ def template_schema(template: str) -> typing.Callable[[dict, dict], list[str]]:
         parts = prefix_path.split("/")
         unquoted_parts = [urllib.parse.unquote(part) for part in parts]
         return [
-            unquoted_part for unquoted_part in unquoted_parts if unquoted_part != ""
+            unquoted_part for unquoted_part in unquoted_parts
         ]
 
     return params_to_parts

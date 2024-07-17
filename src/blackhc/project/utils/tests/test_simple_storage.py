@@ -179,11 +179,12 @@ def test_save_and_load_with_timestamp(fs: fake_filesystem.FakeFilesystem):
     
     
 def test_part_schema():
+    # Test with a simple schema
     schema = simple_storage.part_schema(
-        simple_storage.PartSchemaLiteral("literal"),
-        simple_storage.PartSchemaKW("key", "value"),
-        simple_storage.PartSchemaIdentifier,
-        ("arg1", simple_storage.PartSchemaLiteral("nested_literal"))
+        simple_storage.PartLiteral("literal"),
+        simple_storage.PartKW("key", "value"),
+        simple_storage.PartIdentifier,
+        ("arg1", simple_storage.PartLiteral("nested_literal"))
     )
 
     bound_arguments = {"arg1": "arg1_value"}
@@ -196,8 +197,56 @@ def test_part_schema():
         {"arg1": "arg1_value", None: "nested_literal"}
     ]
 
+    # Test with a more complex schema
+    schema = simple_storage.part_schema(
+        simple_storage.PartLiteral("fixed"),
+        simple_storage.PartKW("param", "test"),
+        simple_storage.PartIdentifier,
+        ("arg1", "arg2", simple_storage.PartKW("a", "end_literal"))
+    )
+
+    bound_arguments = {"arg1": "value1", "arg2": "value2"}
+    identifier = "complex_id"
+    parts = schema(bound_arguments, identifier)
+    assert parts == [
+        "fixed",
+        {"param": "test"},
+        "complex_id",
+        {"arg1": "value1", "arg2": "value2", "a": "end_literal"}
+    ]
+
+    # Test with missing argument
+    schema = simple_storage.part_schema(
+        simple_storage.PartLiteral("start"),
+        simple_storage.PartIdentifier,
+        ("arg1", simple_storage.PartLiteral("middle"), "arg2")
+    )
+
+    bound_arguments = {"arg1": "value1"}
+    identifier = "missing_arg_id"
+    with pytest.raises(ValueError, match='Missing schema arg'):
+        parts = schema(bound_arguments, identifier)
+
+    # Test with nested schema
+    schema = simple_storage.part_schema(
+        simple_storage.PartLiteral("nested"),
+        simple_storage.PartIdentifier,
+        ("arg1", simple_storage.PartLiteral("inner_end"))
+    )
+
+    bound_arguments = {"arg1": "inner_value"}
+    identifier = "nested_id"
+    parts = schema(bound_arguments, identifier)
+    assert parts == [
+        "nested",
+        "nested_id",
+        {"arg1": "inner_value", None: "inner_end"}
+    ]
+    
+
 def test_prefix_schema():
-    schema = simple_storage.prefix_schema(["prefix1", "prefix2"])
+    # Test with simple prefix schema
+    schema = simple_storage.prefix_schema("prefix1", "prefix2")
 
     bound_arguments = {"prefix1": "value1", "prefix2": "value2", "arg1": "arg1_value"}
     identifier = "test_id"
@@ -208,13 +257,94 @@ def test_prefix_schema():
         {"arg1": "arg1_value"}
     ]
 
+    # Test with prefix schema containing a separator
+    schema = simple_storage.prefix_schema("prefix1", "/", "prefix2")
+
+    bound_arguments = {"prefix1": "value1", "prefix2": "value2", "arg1": "arg1_value"}
+    identifier = "test_id"
+    parts = schema(bound_arguments, identifier)
+    assert parts == [
+        {"prefix1": "value1"},
+        {"prefix2": "value2"},
+        "test_id",
+        {"arg1": "arg1_value"}
+    ]
+
+    # Test with prefix schema containing a set
+    schema = simple_storage.prefix_schema({"prefix1", "prefix2"})
+
+    bound_arguments = {"prefix1": "value1", "prefix2": "value2", "arg1": "arg1_value"}
+    identifier = "test_id"
+    parts = schema(bound_arguments, identifier)
+    assert parts == [
+        {"prefix1": "value1", "prefix2": "value2"},
+        "test_id",
+        {"arg1": "arg1_value"}
+    ]
+
+    # Test with prefix schema containing a list
+    schema = simple_storage.prefix_schema(["prefix1", "prefix2"])
+
+    bound_arguments = {"prefix1": "value1", "prefix2": "value2", "arg1": "arg1_value"}
+    identifier = "test_id"
+    parts = schema(bound_arguments, identifier)
+    assert parts == [
+        ["value1", "value2"],
+        "test_id",
+        {"arg1": "arg1_value"}
+    ]
+    
+
 def test_template_schema():
+    # Test with a simple template schema
     schema = simple_storage.template_schema("prefix/{prefix1}/{prefix2}/{identifier}/suffix")
 
     bound_arguments = {"prefix1": "value1", "prefix2": "value2"}
     identifier = "test_id"
     parts = schema(bound_arguments, identifier)
     assert parts == ["prefix", "value1", "value2", "test_id", "suffix"]
+
+    # Test with a template schema containing only identifier
+    schema = simple_storage.template_schema("{identifier}")
+
+    bound_arguments = {}
+    identifier = "only_id"
+    parts = schema(bound_arguments, identifier)
+    assert parts == ["only_id"]
+
+    # Test with a template schema containing mixed arguments
+    schema = simple_storage.template_schema("start/{prefix1}/{identifier}/end")
+
+    bound_arguments = {"prefix1": "value1"}
+    identifier = "mixed_id"
+    parts = schema(bound_arguments, identifier)
+    assert parts == ["start", "value1", "mixed_id", "end"]
+
+    # Test with a template schema containing special characters
+    schema = simple_storage.template_schema("{{hello}}/{prefix1}/{identifier}/chars")
+
+    bound_arguments = {"prefix1": "value1"}
+    identifier = "special_id"
+    parts = schema(bound_arguments, identifier)
+    assert parts == ["{hello}", "value1", "special_id", "chars"]
+
+    # Test with a template schema containing missing argument
+    schema = simple_storage.template_schema("missing/{prefix1}/{prefix2}/{identifier}")
+
+    bound_arguments = {"prefix1": "value1"}
+    identifier = "missing_id"
+    try:
+        parts = schema(bound_arguments, identifier)
+    except KeyError as e:
+        assert 'prefix2' in str(e)
+
+    # Test with a final /
+    schema = simple_storage.template_schema("final/{prefix1}/{identifier}/")
+
+    bound_arguments = {"prefix1": "value1"}
+    identifier = "final_id"
+    parts = schema(bound_arguments, identifier)
+    assert parts == ["final", "value1", "final_id", ""]
 
 
 if __name__ == "__main__":
