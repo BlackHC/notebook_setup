@@ -6,29 +6,46 @@ import enum
 
 
 def test_arg_to_path_fragment():
-    assert simple_storage.arg_to_path_fragment(123) == "123"
-    assert simple_storage.arg_to_path_fragment(123.456) == "123.456"
-    assert simple_storage.arg_to_path_fragment("test_string") == "test_string"
-    assert simple_storage.arg_to_path_fragment([1, 2, 3]) == "1+2+3"
-    assert simple_storage.arg_to_path_fragment((1, 2, 3)) == "(1,2,3)"
-    assert simple_storage.arg_to_path_fragment({"key": "value"}) == "{key:value}"
-    assert simple_storage.arg_to_path_fragment(123.0) == "123"
-    assert simple_storage.arg_to_path_fragment(["a", "b", "c"]) == "a+b+c"
-    assert simple_storage.arg_to_path_fragment({"a": 1, "b": 2}) == "{a:1,b:2}"
+    assert simple_storage.value_to_path_fragment(123) == "123"
+    assert simple_storage.value_to_path_fragment(123.456) == "123.456"
+    assert simple_storage.value_to_path_fragment("test_string") == "test_string"
+    assert simple_storage.value_to_path_fragment([1, 2, 3]) == "1+2+3"
+    assert simple_storage.value_to_path_fragment((1, 2, 3)) == "(1,2,3)"
+    assert simple_storage.value_to_path_fragment({"key": "value"}) == "{key:value}"
+    assert simple_storage.value_to_path_fragment({None: "value"}) == "{None:value}"
+    assert simple_storage.value_to_path_fragment(123.0) == "123"
+    assert simple_storage.value_to_path_fragment(["a", "b", "c"]) == "a+b+c"
+    assert simple_storage.value_to_path_fragment({"a": 1, "b": 2}) == "{a:1,b:2}"
 
     class TestEnum(enum.Enum):
         OPTION_A = "OptionA"
         OPTION_B = "OptionB"
 
-    assert simple_storage.arg_to_path_fragment(TestEnum.OPTION_A) == "OptionA"
-    assert simple_storage.arg_to_path_fragment(TestEnum.OPTION_B) == "OptionB"
+    assert simple_storage.value_to_path_fragment(TestEnum.OPTION_A) == "OptionA"
+    assert simple_storage.value_to_path_fragment(TestEnum.OPTION_B) == "OptionB"
+    
 def test_arg_to_path_fragment_with_int_enum():
     class IntEnum(enum.Enum):
         OPTION_1 = 1
         OPTION_2 = 2
 
-    assert simple_storage.arg_to_path_fragment(IntEnum.OPTION_1) == "OPTION_1"
-    assert simple_storage.arg_to_path_fragment(IntEnum.OPTION_2) == "OPTION_2"
+    assert simple_storage.value_to_path_fragment(IntEnum.OPTION_1) == "OPTION_1"
+    assert simple_storage.value_to_path_fragment(IntEnum.OPTION_2) == "OPTION_2"
+    
+    
+def test_dict_to_path_fragment():
+    assert simple_storage.dict_to_path_fragment({"key": "value"}) == "key:value"
+    assert simple_storage.dict_to_path_fragment({"key1": "value1", "key2": "value2"}) == "key1:value1_key2:value2"
+    assert simple_storage.dict_to_path_fragment({"key": 123}) == "key:123"
+    assert simple_storage.dict_to_path_fragment({"key": 123.456}) == "key:123.456"
+    assert simple_storage.dict_to_path_fragment({"key": [1, 2, 3]}) == "key:1+2+3"
+    assert simple_storage.dict_to_path_fragment({"key": (1, 2, 3)}) == "key:(1,2,3)"
+    assert simple_storage.dict_to_path_fragment({"key": {"subkey": "subvalue"}}) == "key:{subkey:subvalue}"
+    assert simple_storage.dict_to_path_fragment({"key": None}) == "key:None"
+    assert simple_storage.dict_to_path_fragment({"key": 123.0}) == "key:123"
+    assert simple_storage.dict_to_path_fragment({"key1": "value1", "key2": None}) == "key1:value1_key2:None"
+    assert simple_storage.dict_to_path_fragment({None: 123.0}) == "123"
+
 
 def test_save_and_load_pkl(fs: fake_filesystem.FakeFilesystem):
     test_obj = {"key": "value"}
@@ -96,26 +113,109 @@ def test_cache_decorator(fs: fake_filesystem.FakeFilesystem):
     root = "/tmp/blackhc.project"
     fs.CreateDirectory(root)
     
-    @simple_storage.cache(prefix_args=["arg1"], root=root, force_format="json")
+    counter = 0
+    
+    @simple_storage.cache(path_schema=simple_storage.prefix_schema(["arg1"]), root=root, force_format="json")
     def test_function(arg1, arg2):
+        nonlocal counter
+        counter += 1
         return {"result": arg1 + arg2}
             
     # Test loading directly from cache
     with pytest.raises(FileNotFoundError):
         loaded_result = test_function.load(1, 2)
+        
+    assert counter == 0
     
     result = test_function(1, 2)
     assert result == {"result": 3}
+    assert counter == 1
     
     cached_result = test_function(1, 2)
     assert cached_result == result
+    assert counter == 1
     
     # Test loading directly from cache
     loaded_result = test_function.load(1, 2)
     assert loaded_result == result
+    assert counter == 1
     
     # Test recomputing the result
     recomputed_result = test_function.recompute(1, 2)
     assert recomputed_result == result
+    assert counter == 2
+    
     # We should have two subdirectories now
     assert len(os.listdir(test_function.get_prefix_path(1, 2))) == 2
+
+
+def test_save_and_load_with_timestamp(fs: fake_filesystem.FakeFilesystem):
+    test_obj = {"key": "value"}
+    root = "/tmp/blackhc.project"
+    fs.CreateDirectory(root)
+    
+    # Test saving with NOW timestamp
+    path_now = simple_storage.save_json(test_obj, "test", root=root, timestamp=simple_storage.Timestamp.NOW)
+    loaded_obj_now = simple_storage.load_json("test", root=root, timestamp=simple_storage.Timestamp.LATEST)
+    assert test_obj == loaded_obj_now
+    assert os.path.exists(f"{path_now}meta.json")
+    
+    # Test saving with a specific timestamp
+    specific_timestamp = "2023-01-01T00:00:00"
+    path_specific = simple_storage.save_json(test_obj, "test2", root=root, timestamp=specific_timestamp)
+    loaded_obj_specific = simple_storage.load_json("test2", root=root, timestamp=specific_timestamp)
+    assert test_obj == loaded_obj_specific
+    assert os.path.exists(f"{path_specific}meta.json")
+    
+    specific_timestamp = "2024-01-01T00:00:00"
+    path_specific = simple_storage.save_json(test_obj, "test2", root=root, timestamp=specific_timestamp)
+    loaded_obj_specific = simple_storage.load_json("test2", root=root, timestamp=specific_timestamp)
+    assert test_obj == loaded_obj_specific
+    assert os.path.exists(f"{path_specific}meta.json")
+    
+    # Test loading with LATEST timestamp
+    loaded_obj_latest = simple_storage.load_json("test2", root=root, timestamp=simple_storage.Timestamp.LATEST)
+    assert test_obj == loaded_obj_latest
+    
+    
+def test_part_schema():
+    schema = simple_storage.part_schema(
+        simple_storage.PartSchemaLiteral("literal"),
+        simple_storage.PartSchemaKW("key", "value"),
+        simple_storage.PartSchemaIdentifier,
+        ("arg1", simple_storage.PartSchemaLiteral("nested_literal"))
+    )
+
+    bound_arguments = {"arg1": "arg1_value"}
+    identifier = "test_id"
+    parts = schema(bound_arguments, identifier)
+    assert parts == [
+        "literal",
+        {"key": "value"},
+        "test_id",
+        {"arg1": "arg1_value", None: "nested_literal"}
+    ]
+
+def test_prefix_schema():
+    schema = simple_storage.prefix_schema(["prefix1", "prefix2"])
+
+    bound_arguments = {"prefix1": "value1", "prefix2": "value2", "arg1": "arg1_value"}
+    identifier = "test_id"
+    parts = schema(bound_arguments, identifier)
+    assert parts == [
+        {"prefix1": "value1", "prefix2": "value2"},
+        "test_id",
+        {"arg1": "arg1_value"}
+    ]
+
+def test_template_schema():
+    schema = simple_storage.template_schema("prefix/{prefix1}/{prefix2}/{identifier}/suffix")
+
+    bound_arguments = {"prefix1": "value1", "prefix2": "value2"}
+    identifier = "test_id"
+    parts = schema(bound_arguments, identifier)
+    assert parts == ["prefix", "value1", "value2", "test_id", "suffix"]
+
+
+if __name__ == "__main__":
+    pytest.main()
