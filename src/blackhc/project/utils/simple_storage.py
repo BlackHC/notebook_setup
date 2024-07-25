@@ -46,7 +46,7 @@ def get_callable_full_name(f: typing.Callable):
 
 def escape_path_fragment(part: str):
     """Escape a path part."""
-    return urllib.parse.quote(part, safe=" +(,){:}%")
+    return urllib.parse.quote(part, safe=" +(,){:}[]%")
 
 
 def kwarg_to_path_fragment(key: str, value) -> str:
@@ -78,7 +78,7 @@ def value_to_path_fragment(
             value, ".6g"
         )
     elif isinstance(value, list):
-        value = list_to_path_fragment(value)
+        value = "[" + ",".join(map(value_to_path_fragment, value)) + "]"
     elif isinstance(value, tuple):
         value = "(" + ",".join(map(value_to_path_fragment, value)) + ")"
     elif isinstance(value, dict):
@@ -165,7 +165,7 @@ def collect_metadata(*parts) -> dict[str]:
         timestamp=datetime.now().isoformat(),
         git=dict(commit=head_commit, url=github_url),
         wandb=dict(id=wandb_id, url=wandb_url),
-        parts=parts,
+        parts=list(parts),
     )
     return metadata
 
@@ -250,7 +250,7 @@ def _align_timestamp(
 
 def _save_metadata(
     *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> str:
+) -> tuple[str, dict]:
     metadata = collect_metadata(*parts)
     prefix_path = get_prefix_path(
         *parts, root=root, timestamp=_align_timestamp(timestamp, metadata["timestamp"])
@@ -259,7 +259,7 @@ def _save_metadata(
     os.makedirs(os.path.dirname(prefix_path), exist_ok=True)
     with open(_combine_path(prefix_path, "meta.json"), "wt", encoding="utf-8") as f:
         f.write(metadata_string)
-    return prefix_path
+    return prefix_path, metadata
 
 
 def load_metadata(
@@ -274,18 +274,18 @@ def load_metadata(
 def prepare_pkl_output_path(
     *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
 ) -> str:
-    prefix_path = _save_metadata(*parts, root=root, timestamp=timestamp)
+    prefix_path, metadata = _save_metadata(*parts, root=root, timestamp=timestamp)
     output_path = _combine_path(prefix_path, "data.pkl")
-    return output_path
+    return output_path, metadata
 
 
 def save_pkl(
     obj, *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> str:
-    prefix_path = _save_metadata(*parts, root=root, timestamp=timestamp)
+) -> tuple[str, dict]:
+    prefix_path, metadata = _save_metadata(*parts, root=root, timestamp=timestamp)
     with open(_combine_path(prefix_path, "data.pkl"), "wb") as f:
         pickle.dump(obj, f)
-    return prefix_path
+    return prefix_path, metadata
 
 
 def load_pkl(
@@ -299,11 +299,11 @@ def load_pkl(
 
 def save_pt(
     obj, *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> str:
-    prefix_path = _save_metadata(*parts, root=root, timestamp=timestamp)
+) -> tuple[str, dict]:
+    prefix_path, metadata = _save_metadata(*parts, root=root, timestamp=timestamp)
     with open(_combine_path(prefix_path, "data.pt"), "wb") as f:
         torch.save(obj, f)
-    return prefix_path
+    return prefix_path, metadata
 
 
 def load_pt(
@@ -317,11 +317,11 @@ def load_pt(
 
 def save_json(
     obj, *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> str:
-    prefix_path = _save_metadata(*parts, root=root, timestamp=timestamp)
+) -> tuple[str, dict]:
+    prefix_path, metadata = _save_metadata(*parts, root=root, timestamp=timestamp)
     with open(_combine_path(prefix_path, "data.json"), "wt", encoding="utf-8") as f:
         json.dump(obj, f)
-    return prefix_path
+    return prefix_path, metadata
 
 
 def load_json(
@@ -335,8 +335,8 @@ def load_json(
 
 def save_pkl_or_json(
     obj, *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> str:
-    prefix_path = _save_metadata(*parts, root=root, timestamp=timestamp)
+) -> tuple[str, dict]:
+    prefix_path, metadata = _save_metadata(*parts, root=root, timestamp=timestamp)
 
     # Pickle the object into bytes
     pickled_obj = pickle.dumps(obj)
@@ -351,14 +351,14 @@ def save_pkl_or_json(
                 _combine_path(prefix_path, "data.json"), "wt", encoding="utf-8"
             ) as f:
                 json.dump(obj, f)
-            return prefix_path
+            return prefix_path, metadata
         except (TypeError, OverflowError, AssertionError):
             # If it fails, save as pickle instead.
             pass
 
     with open(_combine_path(prefix_path, "data.pkl"), "wb") as f:
         f.write(pickled_obj)
-    return prefix_path
+    return prefix_path, metadata
 
 
 def load(
@@ -396,7 +396,7 @@ def load(
         raise FileNotFoundError("No data file found for the prefix path", prefix_path)
     
     
-def scan_meta_files(root: str) -> dict[str, dict]:
+def load_all_metadata(root: str) -> dict[str, dict]:
     """Scans for *meta.json files in root and loads all meta files into a path->metadata dict."""
     meta_files = [
         os.path.join(dirpath, filename)
@@ -407,7 +407,10 @@ def scan_meta_files(root: str) -> dict[str, dict]:
 
     meta_data = {}
     for meta_file in meta_files:
-        path = meta_file.removesuffix("meta.json")
+        if meta_file.endswith(".meta.json"):
+            path = meta_file.removesuffix(".meta.json")
+        else:
+            path = meta_file.removesuffix("meta.json")
         with open(meta_file, "rt", encoding="utf-8") as f:
             meta_data[path] = json.load(f)
 
@@ -688,7 +691,7 @@ def cache(
             case _:
                 raise ValueError(f"Unsupported force_format: {force_format}")
 
-        cache_path = save_fn(result, root=cache_path)
+        cache_path, _ = save_fn(result, root=cache_path)
         print(f"📦 Cached result in {cache_path}")
         return result
 

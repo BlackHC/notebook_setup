@@ -3,18 +3,21 @@ from blackhc.project.utils import simple_storage
 import os
 import pytest
 import enum
+import json
 
 
 def test_arg_to_path_fragment():
     assert simple_storage.value_to_path_fragment(123) == "123"
     assert simple_storage.value_to_path_fragment(123.456) == "123.456"
     assert simple_storage.value_to_path_fragment("test_string") == "test_string"
-    assert simple_storage.value_to_path_fragment([1, 2, 3]) == "1+2+3"
+    assert simple_storage.value_to_path_fragment([1, 2, 3]) == "[1,2,3]"
     assert simple_storage.value_to_path_fragment((1, 2, 3)) == "(1,2,3)"
     assert simple_storage.value_to_path_fragment({"key": "value"}) == "{key:value}"
+    assert simple_storage.value_to_path_fragment({"key": True}) == "{+key}"
+    assert simple_storage.value_to_path_fragment({"key": False}) == "{-key}"
     assert simple_storage.value_to_path_fragment({None: "value"}) == "{None:value}"
     assert simple_storage.value_to_path_fragment(123.0) == "123"
-    assert simple_storage.value_to_path_fragment(["a", "b", "c"]) == "a+b+c"
+    assert simple_storage.value_to_path_fragment(["a", "b", "c"]) == "[a,b,c]"
     assert simple_storage.value_to_path_fragment({"a": 1, "b": 2}) == "{a:1,b:2}"
 
     class TestEnum(enum.Enum):
@@ -38,12 +41,12 @@ def test_dict_to_path_fragment():
     assert simple_storage.dict_to_path_fragment({"key1": "value1", "key2": "value2"}) == "key1:value1_key2:value2"
     assert simple_storage.dict_to_path_fragment({"key": 123}) == "key:123"
     assert simple_storage.dict_to_path_fragment({"key": 123.456}) == "key:123.456"
-    assert simple_storage.dict_to_path_fragment({"key": [1, 2, 3]}) == "key:1+2+3"
+    assert simple_storage.dict_to_path_fragment({"key": [1, 2, 3]}) == "key:[1,2,3]"
     assert simple_storage.dict_to_path_fragment({"key": (1, 2, 3)}) == "key:(1,2,3)"
     assert simple_storage.dict_to_path_fragment({"key": {"subkey": "subvalue"}}) == "key:{subkey:subvalue}"
-    assert simple_storage.dict_to_path_fragment({"key": None}) == "key:None"
+    assert simple_storage.dict_to_path_fragment({"key": None}) == "~key"
     assert simple_storage.dict_to_path_fragment({"key": 123.0}) == "key:123"
-    assert simple_storage.dict_to_path_fragment({"key1": "value1", "key2": None}) == "key1:value1_key2:None"
+    assert simple_storage.dict_to_path_fragment({"key1": "value1", "key2": None}) == "key1:value1_~key2"
     assert simple_storage.dict_to_path_fragment({None: 123.0}) == "123"
 
 
@@ -52,11 +55,11 @@ def test_save_and_load_pkl(fs: fake_filesystem.FakeFilesystem):
     root = "/tmp/blackhc.project"
     fs.CreateDirectory(root)
     
-    path = simple_storage.save_pkl(test_obj, "test", root=root)
+    path, _ = simple_storage.save_pkl(test_obj, "test", root=root)
     loaded_obj = simple_storage.load_pkl("test", root=root)
     
     assert test_obj == loaded_obj
-    assert os.path.exists(f"{path}.meta.json")
+    assert os.path.exists(f"{path}/meta.json")
 
 
 def test_save_and_load_json(fs: fake_filesystem.FakeFilesystem):
@@ -64,11 +67,11 @@ def test_save_and_load_json(fs: fake_filesystem.FakeFilesystem):
     root = "/tmp/blackhc.project"
     fs.CreateDirectory(root)
     
-    path = simple_storage.save_json(test_obj, "test", root=root)
+    path, _ = simple_storage.save_json(test_obj, "test", root=root)
     loaded_obj = simple_storage.load_json("test", root=root)
     
     assert test_obj == loaded_obj
-    assert os.path.exists(f"{path}.meta.json")
+    assert os.path.exists(f"{path}/meta.json")
 
 
 def test_save_and_load_pt(fs: fake_filesystem.FakeFilesystem):
@@ -79,11 +82,11 @@ def test_save_and_load_pt(fs: fake_filesystem.FakeFilesystem):
     root = "/tmp/blackhc.project"
     fs.CreateDirectory(root)
     
-    path = simple_storage.save_pt(test_obj, "test", root=root)
+    path, _ = simple_storage.save_pt(test_obj, "test", root=root)
     loaded_obj = simple_storage.load_pt("test", root=root)
     
     assert simple_storage.torch.equal(test_obj, loaded_obj)
-    assert os.path.exists(f"{path}.meta.json")
+    assert os.path.exists(f"{path}/meta.json")
 
 
 def test_save_pkl_or_json(fs: fake_filesystem.FakeFilesystem):
@@ -91,11 +94,11 @@ def test_save_pkl_or_json(fs: fake_filesystem.FakeFilesystem):
     root = "/tmp/blackhc.project"
     fs.CreateDirectory(root)
     
-    path = simple_storage.save_pkl_or_json(test_obj, "test", root=root)
+    path, _ = simple_storage.save_pkl_or_json(test_obj, "test", root=root)
     loaded_obj = simple_storage.load("test", root=root)
     
     assert test_obj == loaded_obj
-    assert os.path.exists(f"{path}.meta.json")
+    assert os.path.exists(f"{path}/meta.json")
 
 
 def test_collect_metadata(fs: fake_filesystem.FakeFilesystem):
@@ -155,20 +158,20 @@ def test_save_and_load_with_timestamp(fs: fake_filesystem.FakeFilesystem):
     fs.CreateDirectory(root)
     
     # Test saving with NOW timestamp
-    path_now = simple_storage.save_json(test_obj, "test", root=root, timestamp=simple_storage.Timestamp.NOW)
+    path_now, _ = simple_storage.save_json(test_obj, "test", root=root, timestamp=simple_storage.Timestamp.NOW)
     loaded_obj_now = simple_storage.load_json("test", root=root, timestamp=simple_storage.Timestamp.LATEST)
     assert test_obj == loaded_obj_now
     assert os.path.exists(f"{path_now}meta.json")
     
     # Test saving with a specific timestamp
     specific_timestamp = "2023-01-01T00:00:00"
-    path_specific = simple_storage.save_json(test_obj, "test2", root=root, timestamp=specific_timestamp)
+    path_specific, _ = simple_storage.save_json(test_obj, "test2", root=root, timestamp=specific_timestamp)
     loaded_obj_specific = simple_storage.load_json("test2", root=root, timestamp=specific_timestamp)
     assert test_obj == loaded_obj_specific
     assert os.path.exists(f"{path_specific}meta.json")
     
     specific_timestamp = "2024-01-01T00:00:00"
-    path_specific = simple_storage.save_json(test_obj, "test2", root=root, timestamp=specific_timestamp)
+    path_specific, _ = simple_storage.save_json(test_obj, "test2", root=root, timestamp=specific_timestamp)
     loaded_obj_specific = simple_storage.load_json("test2", root=root, timestamp=specific_timestamp)
     assert test_obj == loaded_obj_specific
     assert os.path.exists(f"{path_specific}meta.json")
@@ -345,6 +348,57 @@ def test_template_schema():
     identifier = "final_id"
     parts = schema(bound_arguments, identifier)
     assert parts == ["final", "value1", "final_id", ""]
+
+
+def test_load_all_metadata_simple(fs: fake_filesystem.FakeFilesystem):
+    # Create a temporary directory structure with meta.json files
+    meta_dir = "/tmp/blackhc.project/meta"
+    fs.CreateDirectory(meta_dir)
+    sub_dir = os.path.join(meta_dir, "sub")
+    fs.CreateDirectory(sub_dir)
+
+    meta_file_1 = os.path.join(meta_dir, "file1.meta.json")
+    meta_file_2 = os.path.join(sub_dir, "file2.meta.json")
+
+    meta_content_1 = {"key1": "value1"}
+    meta_content_2 = {"key2": "value2"}
+    
+    with open(meta_file_1, 'wt', encoding='utf-8') as f:
+        json.dump(meta_content_1, f)
+    with open(meta_file_2, 'wt', encoding='utf-8') as f:
+        json.dump(meta_content_2, f)
+
+    # Call the function to load all metadata
+    result = simple_storage.load_all_metadata(str(meta_dir))
+
+    # Verify the result
+    expected_result = {
+        str(meta_file_1).removesuffix(".meta.json"): meta_content_1,
+        str(meta_file_2).removesuffix(".meta.json"): meta_content_2,
+    }
+    assert result == expected_result
+
+
+def test_load_all_metadata_with_save_json(fs: fake_filesystem.FakeFilesystem):
+    root = "/tmp/blackhc.project"
+    fs.CreateDirectory(root)
+    
+    # Save some data using save_json
+    test_obj_1 = {"key1": "value1"}
+    test_obj_2 = {"key2": "value2"}
+    
+    path_1, meta_1 = simple_storage.save_json(test_obj_1, "test1", root=root)
+    path_2, meta_2 = simple_storage.save_json(test_obj_2, "test2", root=root)
+    
+    # Call the function to load all metadata
+    result = simple_storage.load_all_metadata(root)
+    
+    # Verify the result
+    expected_result = {
+        path_1: meta_1,
+        path_2: meta_2,
+    }
+    assert result == expected_result
 
 
 if __name__ == "__main__":
