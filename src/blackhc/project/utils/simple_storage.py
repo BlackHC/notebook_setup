@@ -44,9 +44,21 @@ def get_callable_full_name(f: typing.Callable):
     return f.__qualname__
 
 
-def escape_path_part(part: str):
+def escape_path_fragment(part: str):
     """Escape a path part."""
-    return urllib.parse.quote(part, safe=" +(,){:}")
+    return urllib.parse.quote(part, safe=" +(,){:}%")
+
+
+def kwarg_to_path_fragment(key: str, value) -> str:
+    """Convert a keyword argument to a path fragment."""
+    key = value_to_path_fragment(key)
+    if value is None:
+        return f"~{key}"
+    elif isinstance(value, bool):
+        return f"+{key}" if value else f"-{key}"
+    else:
+        value = value_to_path_fragment(value)
+        return f"{key}:{value}" if value else key
 
 
 def value_to_path_fragment(
@@ -64,16 +76,16 @@ def value_to_path_fragment(
     if isinstance(value, float):
         value = format(
             value, ".6g"
-        )  # Use general format with up to 6 significant digits
+        )
     elif isinstance(value, list):
-        value = "+".join(map(value_to_path_fragment, value))
+        value = list_to_path_fragment(value)
     elif isinstance(value, tuple):
         value = "(" + ",".join(map(value_to_path_fragment, value)) + ")"
     elif isinstance(value, dict):
         value = (
             "{"
             + ",".join(
-                f"{value_to_path_fragment(k)}:{value_to_path_fragment(v)}"
+                kwarg_to_path_fragment(k, v)
                 for k, v in value.items()
             )
             + "}"
@@ -84,7 +96,7 @@ def value_to_path_fragment(
         pass
     else:
         raise ValueError(f"Unsupported value type: {type(value)}")
-    return escape_path_part(str(value))
+    return escape_path_fragment(str(value))
 
 
 def dict_to_path_fragment(kwargs: dict):
@@ -99,19 +111,22 @@ def dict_to_path_fragment(kwargs: dict):
     kwarg_fragments = []
     for key, value in kwargs.items():
         if key is not None:
-            kwarg_fragments.append(f"{key}:{value_to_path_fragment(value)}")
+            kwarg_fragments.append(kwarg_to_path_fragment(key, value))
         else:
-            kwarg_fragments.append(f"{value_to_path_fragment(value)}")
-    return "_".join(kwarg_fragments)
+            kwarg_fragments.append(value_to_path_fragment(value))
+    return list_to_path_fragment(kwarg_fragments)
 
 
 def list_to_path_fragment(args: list):
     """Convert a list of arguments to a path fragment."""
     return "_".join(map(value_to_path_fragment, args))
 
-def generate_path(*parts) -> str:
+
+def generate_path(*parts, force_dir: bool = True) -> str:
     """
     Generates a path based on the given parts.
+    
+    To ensure that a new sub-directory is created, add None at the end.
 
     Args:
         identifier (str or callable): The identifier to be used in the path.
@@ -123,19 +138,16 @@ def generate_path(*parts) -> str:
     path_parts = []
     for part in parts:
         if part is None:
-            fragment = ""
+            fragment = "~"
         elif isinstance(part, dict):
             fragment = dict_to_path_fragment(part)
         elif isinstance(part, list):
             fragment = list_to_path_fragment(part)
         else:
             fragment = value_to_path_fragment(part)
-        if fragment != "":
-            path_parts.append(fragment)
-
-    if parts and parts[-1] is None:
+        path_parts.append(fragment)
+    if force_dir:
         path_parts.append("")
-
     return "/".join(path_parts)
 
 
@@ -213,12 +225,16 @@ def get_prefix_path(
 
 
 def _combine_path(prefix_path, ext) -> str:
+    if prefix_path.endswith(ext):
+        print("🚨 Warning: prefix_path", prefix_path, " already ends with ext", ext)
+        return prefix_path
+    
     if prefix_path.endswith("/"):
         return f"{prefix_path}{ext}"
     return f"{prefix_path}.{ext}"
 
 
-def _sync_timestamp(
+def _align_timestamp(
     timestamp: Timestamp | str | datetime, master_timestamp: str | datetime
 ) -> str | datetime:
     match timestamp:
@@ -237,7 +253,7 @@ def _save_metadata(
 ) -> str:
     metadata = collect_metadata(*parts)
     prefix_path = get_prefix_path(
-        *parts, root=root, timestamp=_sync_timestamp(timestamp, metadata["timestamp"])
+        *parts, root=root, timestamp=_align_timestamp(timestamp, metadata["timestamp"])
     )
     metadata_string = jsonpickle.encode(metadata, unpicklable=False)
     os.makedirs(os.path.dirname(prefix_path), exist_ok=True)
@@ -253,6 +269,14 @@ def load_metadata(
     prefix_path = get_prefix_path(*parts, root=root, timestamp=timestamp)
     with open(_combine_path(prefix_path, "meta.json"), "rt", encoding="utf-8") as f:
         return json.load(f)
+    
+
+def prepare_pkl_output_path(
+    *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
+) -> str:
+    prefix_path = _save_metadata(*parts, root=root, timestamp=timestamp)
+    output_path = _combine_path(prefix_path, "data.pkl")
+    return output_path
 
 
 def save_pkl(
@@ -370,6 +394,24 @@ def load(
         )
     else:
         raise FileNotFoundError("No data file found for the prefix path", prefix_path)
+    
+    
+def scan_meta_files(root: str) -> dict[str, dict]:
+    """Scans for *meta.json files in root and loads all meta files into a path->metadata dict."""
+    meta_files = [
+        os.path.join(dirpath, filename)
+        for dirpath, _, filenames in os.walk(root)
+        for filename in filenames
+        if filename.endswith("meta.json")
+    ]
+
+    meta_data = {}
+    for meta_file in meta_files:
+        path = meta_file.removesuffix("meta.json")
+        with open(meta_file, "rt", encoding="utf-8") as f:
+            meta_data[path] = json.load(f)
+
+    return meta_data
 
 
 @dataclass
@@ -559,7 +601,7 @@ def template_schema(template: str) -> typing.Callable[[dict, dict], list[str]]:
                 key: value_to_path_fragment(value)
                 for key, value in bound_arguments.items()
             },
-            identifier=escape_path_part(identifier),
+            identifier=escape_path_fragment(identifier),
         )
         parts = prefix_path.split("/")
         unquoted_parts = [urllib.parse.unquote(part) for part in parts]
