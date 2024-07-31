@@ -74,21 +74,14 @@ def value_to_path_fragment(
         value = value.value if isinstance(value.value, str) else value.name
 
     if isinstance(value, float):
-        value = format(
-            value, ".6g"
-        )
+        value = format(value, ".6g")
     elif isinstance(value, list):
         value = "[" + ",".join(map(value_to_path_fragment, value)) + "]"
     elif isinstance(value, tuple):
         value = "(" + ",".join(map(value_to_path_fragment, value)) + ")"
     elif isinstance(value, dict):
         value = (
-            "{"
-            + ",".join(
-                kwarg_to_path_fragment(k, v)
-                for k, v in value.items()
-            )
-            + "}"
+            "{" + ",".join(kwarg_to_path_fragment(k, v) for k, v in value.items()) + "}"
         )
     elif isinstance(value, int):
         value = str(value)
@@ -125,7 +118,7 @@ def list_to_path_fragment(args: list):
 def generate_path(*parts, force_dir: bool = True) -> str:
     """
     Generates a path based on the given parts.
-    
+
     To ensure that a new sub-directory is created, add None at the end.
 
     Args:
@@ -179,7 +172,10 @@ class Timestamp(enum.Enum):
 
 
 def get_prefix_path(
-    *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
+    *parts,
+    root: str = "",
+    timestamp: Timestamp | str | datetime = Timestamp.NONE,
+    force_dir: bool = True,
 ) -> str:
     """Get the prefix path for the given parts, root, and timestamp. The path is used as base path for saving and loading.
     If timestamp != Timestamp.NONE, we create a directory and use timestamps as subdirectories.
@@ -193,7 +189,7 @@ def get_prefix_path(
     Returns:
         str: The prefix path.
     """
-    base_prefix_path = os.path.join(root, generate_path(*parts))
+    base_prefix_path = os.path.join(root, generate_path(*parts, force_dir=force_dir))
     match timestamp:
         case Timestamp.NONE:
             prefix_path = base_prefix_path
@@ -228,7 +224,7 @@ def _combine_path(prefix_path, ext) -> str:
     if prefix_path.endswith(ext):
         print("🚨 Warning: prefix_path", prefix_path, " already ends with ext", ext)
         return prefix_path
-    
+
     if prefix_path.endswith("/"):
         return f"{prefix_path}{ext}"
     return f"{prefix_path}.{ext}"
@@ -269,7 +265,7 @@ def load_metadata(
     prefix_path = get_prefix_path(*parts, root=root, timestamp=timestamp)
     with open(_combine_path(prefix_path, "meta.json"), "rt", encoding="utf-8") as f:
         return json.load(f)
-    
+
 
 def prepare_pkl_output_path(
     *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
@@ -362,11 +358,16 @@ def save_pkl_or_json(
 
 
 def load(
-    *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
+    *parts,
+    root: str = "",
+    timestamp: Timestamp | str | datetime = Timestamp.NONE,
+    force_dir: bool = True,
 ):
     assert timestamp != Timestamp.NOW
-    prefix_path = get_prefix_path(*parts, root=root, timestamp=timestamp)
-
+    prefix_path = get_prefix_path(
+        *parts, root=root, timestamp=timestamp, force_dir=force_dir
+    )
+    print(prefix_path)
     # Find the *data.* file (can either end in pkl, json or ot)
     data_files = [
         f
@@ -394,8 +395,8 @@ def load(
         )
     else:
         raise FileNotFoundError("No data file found for the prefix path", prefix_path)
-    
-    
+
+
 def load_all_metadata(root: str) -> dict[str, dict]:
     """Scans for *meta.json files in root and loads all meta files into a path->metadata dict."""
     meta_files = [
@@ -434,7 +435,7 @@ class PartKW:
 
 class PartIdentifier:
     """The identifier part of the path, which gets filled in by the identifier argument."""
-    
+
     pass
 
 
@@ -456,9 +457,10 @@ def part_schema(*schema_parts: list):
 
         And creates "{root}/fixed_dataset/arg1:{arg1}_split:test_arg2:arg{2}" as prefix path (excl timestamps).
     """
-    
+
     def params_to_parts(bound_arguments: dict, identifier: str) -> list[str]:
         """Convert a list of arguments and a dictionary of keyword arguments to a list of path parts using the given schema."""
+
         def missing_arg_error(arg):
             raise ValueError(
                 "Missing schema arg:",
@@ -468,9 +470,9 @@ def part_schema(*schema_parts: list):
                 " for ",
                 bound_arguments,
                 "(or use $identifier for the identifier"
-                "or PartSchemaLiteral or PartSchemaKW for literal parts)."
+                "or PartSchemaLiteral or PartSchemaKW for literal parts).",
             )
-        
+
         parts = []
         for schema_part in schema_parts:
             if isinstance(schema_part, PartLiteral):
@@ -489,7 +491,9 @@ def part_schema(*schema_parts: list):
                 for arg in schema_part:
                     if isinstance(arg, PartLiteral):
                         if None in part:
-                            raise ValueError("Multiple PartLiteral (or Identifier) not allowed in set schema parts")
+                            raise ValueError(
+                                "Multiple PartLiteral (or Identifier) not allowed in set schema parts"
+                            )
                         part[None] = arg.value
                     elif isinstance(arg, PartKW):
                         part[arg.key] = arg.value
@@ -520,14 +524,14 @@ def part_schema(*schema_parts: list):
 
 def prefix_schema(*prefix_args: list[str]) -> typing.Callable[[dict, dict], list[str]]:
     """Build a path schema from a list of prefix arguments.
-    
+
     Any "/" in the prefix args is treated as a separator between different parts of the path.
 
     Example:
         schema = prefix_schema(["arg1", "/" "arg2"])
         parts = schema({"arg1": "value1", "arg2": "value2", "arg3": "value3"}, "test_id")
         assert parts == [
-            {"arg1": "value1"}, 
+            {"arg1": "value1"},
             {"arg2": "value2"},
             "test_id",
             {"arg3": "value3"}
@@ -562,7 +566,7 @@ def prefix_schema(*prefix_args: list[str]) -> typing.Callable[[dict, dict], list
                 if prefix_dict:
                     parts.append(prefix_dict)
                     prefix_dict = {}
-                
+
                 prefix_list = []
                 for key in arg:
                     prefix_list.append(bound_arguments[key])
@@ -574,9 +578,7 @@ def prefix_schema(*prefix_args: list[str]) -> typing.Callable[[dict, dict], list
             parts.append(prefix_dict)
         parts.append(identifier)
         suffix_dict = {
-            arg: bound_arguments[arg]
-            for arg in bound_arguments
-            if arg not in used_args
+            arg: bound_arguments[arg] for arg in bound_arguments if arg not in used_args
         }
         parts.append(suffix_dict)
         return parts
@@ -608,9 +610,7 @@ def template_schema(template: str) -> typing.Callable[[dict, dict], list[str]]:
         )
         parts = prefix_path.split("/")
         unquoted_parts = [urllib.parse.unquote(part) for part in parts]
-        return [
-            unquoted_part for unquoted_part in unquoted_parts
-        ]
+        return [unquoted_part for unquoted_part in unquoted_parts]
 
     return params_to_parts
 
