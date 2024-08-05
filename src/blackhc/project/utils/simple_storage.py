@@ -267,9 +267,9 @@ def load_metadata(
         return json.load(f)
 
 
-def prepare_pkl_output_path(
+def prepare_pkl_output(
     *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> str:
+) -> tuple[str, dict]:
     prefix_path, metadata = _save_metadata(*parts, root=root, timestamp=timestamp)
     output_path = _combine_path(prefix_path, "data.pkl")
     return output_path, metadata
@@ -316,7 +316,7 @@ def save_json(
 ) -> tuple[str, dict]:
     prefix_path, metadata = _save_metadata(*parts, root=root, timestamp=timestamp)
     with open(_combine_path(prefix_path, "data.json"), "wt", encoding="utf-8") as f:
-        json.dump(obj, f)
+        f.write(jsonpickle.encode(obj, indent=2, keys=True))
     return prefix_path, metadata
 
 
@@ -326,7 +326,7 @@ def load_json(
     assert timestamp != Timestamp.NOW
     prefix_path = get_prefix_path(*parts, root=root, timestamp=timestamp)
     with open(_combine_path(prefix_path, "data.json"), "rt", encoding="utf-8") as f:
-        return json.load(f)
+        return jsonpickle.decode(f.read(), keys=True)
 
 
 def save_pkl_or_json(
@@ -346,7 +346,7 @@ def save_pkl_or_json(
             with open(
                 _combine_path(prefix_path, "data.json"), "wt", encoding="utf-8"
             ) as f:
-                json.dump(obj, f)
+                f.write(jsonpickle.encode(obj, indent=2, keys=True))
             return prefix_path, metadata
         except (TypeError, OverflowError, AssertionError):
             # If it fails, save as pickle instead.
@@ -383,7 +383,7 @@ def load(
                 return pickle.load(f)
         elif data_file.endswith(".json"):
             with open(data_file, "rt", encoding="utf-8") as f:
-                return json.load(f)
+                return jsonpickle.decode(f.read(), keys=True)
         elif data_file.endswith(".pt"):
             with open(data_file, "rb") as f:
                 return torch.load(f)
