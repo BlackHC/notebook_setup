@@ -7,3 +7,6 @@
 /.idea/
 /.eggs/
 __pycache__/
+
+.env
+logs/

@@ -6,7 +6,7 @@ import enum
 import json
 
 
-def test_arg_to_path_fragment():
+def test_value_to_path_fragment():
     assert simple_storage.value_to_path_fragment(123) == "123"
     assert simple_storage.value_to_path_fragment(123.456) == "123.456"
     assert simple_storage.value_to_path_fragment("test_string") == "test_string"
@@ -27,7 +27,12 @@ def test_arg_to_path_fragment():
     assert simple_storage.value_to_path_fragment(TestEnum.OPTION_A) == "OptionA"
     assert simple_storage.value_to_path_fragment(TestEnum.OPTION_B) == "OptionB"
     
-def test_arg_to_path_fragment_with_int_enum():
+    
+def test_value_to_path_fragment_unknown_type():
+    with pytest.raises(ValueError, match='Unsupported value type'):
+        simple_storage.value_to_path_fragment(object())
+    
+def test_value_to_path_fragment_with_int_enum():
     class IntEnum(enum.Enum):
         OPTION_1 = 1
         OPTION_2 = 2
@@ -53,7 +58,7 @@ def test_dict_to_path_fragment():
 def test_save_and_load_pkl(fs: fake_filesystem.FakeFilesystem):
     test_obj = {"key": "value"}
     root = "/tmp/blackhc.project"
-    fs.CreateDirectory(root)
+    fs.create_dir(root)
     
     path, _ = simple_storage.save_pkl(test_obj, "test", root=root)
     loaded_obj = simple_storage.load_pkl("test", root=root)
@@ -65,7 +70,7 @@ def test_save_and_load_pkl(fs: fake_filesystem.FakeFilesystem):
 def test_save_and_load_json(fs: fake_filesystem.FakeFilesystem):
     test_obj = {"key": "value"}
     root = "/tmp/blackhc.project"
-    fs.CreateDirectory(root)
+    fs.create_dir(root)
     
     path, _ = simple_storage.save_json(test_obj, "test", root=root)
     loaded_obj = simple_storage.load_json("test", root=root)
@@ -80,7 +85,7 @@ def test_save_and_load_pt(fs: fake_filesystem.FakeFilesystem):
     
     test_obj = simple_storage.torch.tensor([1, 2, 3])
     root = "/tmp/blackhc.project"
-    fs.CreateDirectory(root)
+    fs.create_dir(root)
     
     path, _ = simple_storage.save_pt(test_obj, "test", root=root)
     loaded_obj = simple_storage.load_pt("test", root=root)
@@ -92,7 +97,7 @@ def test_save_and_load_pt(fs: fake_filesystem.FakeFilesystem):
 def test_save_pkl_or_json(fs: fake_filesystem.FakeFilesystem):
     test_obj = {"key": "value"}
     root = "/tmp/blackhc.project"
-    fs.CreateDirectory(root)
+    fs.create_dir(root)
     
     path, _ = simple_storage.save_pkl_or_json(test_obj, "test", root=root)
     loaded_obj = simple_storage.load("test", root=root)
@@ -103,7 +108,7 @@ def test_save_pkl_or_json(fs: fake_filesystem.FakeFilesystem):
 
 def test_collect_metadata(fs: fake_filesystem.FakeFilesystem):
     root = "/tmp/blackhc.project"
-    fs.CreateDirectory(root)
+    fs.create_dir(root)
     
     metadata = simple_storage.collect_metadata("test")
     assert "timestamp" in metadata
@@ -114,7 +119,7 @@ def test_collect_metadata(fs: fake_filesystem.FakeFilesystem):
 
 def test_cache_decorator(fs: fake_filesystem.FakeFilesystem):
     root = "/tmp/blackhc.project"
-    fs.CreateDirectory(root)
+    fs.create_dir(root)
     
     counter = 0
     
@@ -155,7 +160,7 @@ def test_cache_decorator(fs: fake_filesystem.FakeFilesystem):
 def test_save_and_load_with_timestamp(fs: fake_filesystem.FakeFilesystem):
     test_obj = {"key": "value"}
     root = "/tmp/blackhc.project"
-    fs.CreateDirectory(root)
+    fs.create_dir(root)
     
     # Test saving with NOW timestamp
     path_now, _ = simple_storage.save_json(test_obj, "test", root=root, timestamp=simple_storage.Timestamp.NOW)
@@ -353,9 +358,9 @@ def test_template_schema():
 def test_load_all_metadata_simple(fs: fake_filesystem.FakeFilesystem):
     # Create a temporary directory structure with meta.json files
     meta_dir = "/tmp/blackhc.project/meta"
-    fs.CreateDirectory(meta_dir)
+    fs.create_dir(meta_dir)
     sub_dir = os.path.join(meta_dir, "sub")
-    fs.CreateDirectory(sub_dir)
+    fs.create_dir(sub_dir)
 
     meta_file_1 = os.path.join(meta_dir, "file1.meta.json")
     meta_file_2 = os.path.join(sub_dir, "file2.meta.json")
@@ -381,7 +386,7 @@ def test_load_all_metadata_simple(fs: fake_filesystem.FakeFilesystem):
 
 def test_load_all_metadata_with_save_json(fs: fake_filesystem.FakeFilesystem):
     root = "/tmp/blackhc.project"
-    fs.CreateDirectory(root)
+    fs.create_dir(root)
     
     # Save some data using save_json
     test_obj_1 = {"key1": "value1"}

@@ -42,7 +42,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from blackhc.project.utils.context_stopwatch import ContextStopwatch
+from blackhc.project.utils.stopwatch_context import ContextStopwatch
 
 
 @dataclass

@@ -16,7 +16,7 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version="7.0.0",
+    version="8.0.0",
     description="Notebook setup code",
     # Fix windows newlines.
     long_description=long_description.replace("\r\n", "\n"),
@@ -66,6 +66,7 @@ setup(
         # See https://x.com/BlackHC/status/1780995421852127477.
         "jupyter_client<8.0.0",  # This fixes issues with jupyter_client <-> pyzmq
         "pyzmq<25",  # This fixes issues with jupyter_client <-> pyzmq
+        "objproxies",
     ],
     # List additional groups of dependencies here (e.g. development
     # dependencies). You can install these using the following syntax,
@@ -77,7 +78,7 @@ setup(
             "coverage",
             "pytest",
             "pytest-forked",
-            "pyfakefs==3.3",
+            "pyfakefs",
             "torch",
             "psutil",
             "pytorch-ignite",

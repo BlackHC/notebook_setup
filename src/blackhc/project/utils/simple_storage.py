@@ -62,7 +62,7 @@ def kwarg_to_path_fragment(key: str, value) -> str:
 
 
 def value_to_path_fragment(
-    value: float | str | int | list | dict | tuple | enum.Enum | None,
+    value: float | str | int | list | dict | tuple | enum.Enum | None | object,
 ) -> str:
     """Convert a value to a path part."""
     # Convert to simpler types if possible.
