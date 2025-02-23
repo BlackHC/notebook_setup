@@ -12,13 +12,15 @@ import pickle
 import sys
 import typing
 import urllib.parse
+import weakref
 
 from dataclasses import dataclass
 from datetime import datetime
 
 import blackhc.project
 from blackhc.project.experiment import get_git_head_commit_and_url
-
+from blackhc.project.utils.collections.weakref_utils import WeakKeyIdMap
+from blackhc.project.utils.collections.bimap import MappingBimap
 
 try:
     import wandb
@@ -30,7 +32,16 @@ try:
     import torch
 except ImportError:
     torch = None
+    
 
+object_identities: MappingBimap[object, str] = MappingBimap(WeakKeyIdMap(), weakref.WeakValueDictionary())
+
+_S = typing.TypeVar("_S")
+
+def identify(obj: _S, path_fragment: str) -> _S:
+    """Identify an object and return the same object."""
+    object_identities.update(obj, path_fragment)
+    return obj
 
 def get_module_name(f):
     """Get the name of the module of an object that has a __module__."""
@@ -122,8 +133,8 @@ def generate_path(*parts, force_dir: bool = True) -> str:
     To ensure that a new sub-directory is created, add None at the end.
 
     Args:
-        identifier (str or callable): The identifier to be used in the path.
-        **kwargs: Additional keyword arguments to be included in the path.
+        parts (list): The parts of the path.
+        force_dir (bool): Whether to force the path to be a directory.
 
     Returns:
         str: The generated path.
@@ -131,7 +142,7 @@ def generate_path(*parts, force_dir: bool = True) -> str:
     path_parts = []
     for part in parts:
         if part is None:
-            fragment = "~"
+            fragment = "__"
         elif isinstance(part, dict):
             fragment = dict_to_path_fragment(part)
         elif isinstance(part, list):
@@ -186,6 +197,7 @@ def get_prefix_path(
         parts (list): The parts of the path.
         root (str): The root of the path.
         timestamp (Timestamp | str | datetime): The timestamp of the path.
+        force_dir (bool): Whether to force the path to be a directory.
     Returns:
         str: The prefix path.
     """
@@ -651,6 +663,12 @@ def cache(
         # Apply defaults
         bound_args = sig.bind(*args, **kwargs)
         bound_args.apply_defaults()
+        
+        bound_arguments = bound_args.arguments
+        # Iterate over all arguments and replace with object identifiers if available
+        for key, value in bound_arguments.items():
+            if value in object_identities:
+                bound_arguments[key] = object_identities[value]
 
         parts = path_schema(bound_args.arguments, get_callable_full_name(f))
         return get_prefix_path(*parts, root=root, timestamp=timestamp)

@@ -91,7 +91,6 @@ class IdMapFinalizer(Generic[KT]):
         self.clear()
 
 
-# TODO: add tests
 class WeakIdSet(MutableSet[T]):
     """
     A set that holds weak references to its items.

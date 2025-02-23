@@ -1,9 +1,6 @@
 from dataclasses import dataclass
 from typing import MutableMapping, Generic, TypeVar, Optional
 
-from persistent.mapping import PersistentMapping
-from persistent import Persistent
-
 
 KT = TypeVar("KT")  # Key type.
 VT = TypeVar("VT")  # Value type.
@@ -121,7 +118,3 @@ class DictBimap(MappingBimap[KT, VT]):
     def __init__(self):
         super().__init__({}, {})
 
-
-class PersistentBimap(MappingBimap[KT, VT], Persistent):
-    def __init__(self):
-        super().__init__(PersistentMapping(), PersistentMapping())

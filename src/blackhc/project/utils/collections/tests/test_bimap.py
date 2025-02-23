@@ -3,7 +3,7 @@ from blackhc.project.utils.collections.bimap import DictBimap, PersistentBimap, 
 import pytest
 
 
-@pytest.mark.parametrize("bimap_factory", [DictBimap, PersistentBimap])
+@pytest.mark.parametrize("bimap_factory", [DictBimap])
 def test_bimap(bimap_factory):
     bimap: MappingBimap = bimap_factory()
 

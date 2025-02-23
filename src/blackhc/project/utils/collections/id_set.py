@@ -4,7 +4,6 @@ T = TypeVar('T')
 T_co = TypeVar('T_co', covariant=True)  # Any type covariant containers.
 
 
-# TODO: add tests
 class IdSet(MutableSet[T]):
     id_value: Dict[int, T]
 
