@@ -42,7 +42,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from blackhc.project.utils.stopwatch_context import ContextStopwatch
+from blackhc.project.utils.stopwatch_context import StopwatchContext
 
 
 @dataclass
@@ -177,7 +177,7 @@ class LogPath:
             cls.all_step_names |= {child.step_name}
         token = cls._current.set(child)
         try:
-            with ContextStopwatch() as stopwatch:
+            with StopwatchContext() as stopwatch:
                 yield child
             cls.all_step_stats[child.step_name].append_time(stopwatch.elapsed_time)
         finally:

@@ -74,7 +74,57 @@ class TreeNamespace:
 
     def __init__(self, wrapped_dict):
         self._dict = wrapped_dict
+        
+        
+    @classmethod
+    def from_nested_data(cls, nested_data: dict[str, Any] | list[Any] | tuple[Any, ...]) -> "TreeNamespace":
+        """Convert a nested dictionary into a TreeNamespace.
 
+        This method recursively converts all nested dictionaries within the input dictionary
+        into TreeNamespace instances. It ensures that each nested dictionary is properly
+        wrapped in a TreeNamespace object, allowing for attribute-style access and
+        wildcard matching.
+
+        Args:
+            nested_data (dict[str, Any] | list[Any] | tuple[Any, ...]): The input data to convert.
+
+        Returns:
+            TreeNamespace: A new TreeNamespace instance containing the converted dictionary.
+
+        Example:
+            nested_data = {
+                "user": {
+                    "profile": {
+                        "name": "Alice",
+                        "age": 30
+                    },
+                    "settings": {
+                        "theme": "dark"
+                    }
+                },
+                "posts": [
+                    {
+                        "title": "First Post"
+                    },
+                    {
+                        "title": "Second Post"
+                    }
+                ]
+            }
+
+            tree = TreeNamespace.from_nested_dicts(nested_dict) # type: ignore
+            print(tree.user.profile.name)  # Output: Alice
+
+            # Use wildcards to access multiple items
+            post_titles = tree["posts/*/title"]
+            print(post_titles["0"])  # Output: First Post
+
+            # Get schema of the tree
+            tree_schema = schema(tree)
+            print(tree_schema.user.profile.age)  # Output: <class 'int'>
+        """
+        return cls(flatten(nested_data))
+        
     def __getattribute__(self, name: str) -> typing.Any:
         if name.startswith("_"):
             return super().__getattribute__(name)
@@ -298,3 +348,36 @@ def schema(obj: Any) -> TreeNamespace | type:
         return TreeNamespace({str(key): schema(value) for key, value in enumerate(obj)})
     else:
         return get_generic_type(obj)
+
+
+def flatten(d: dict[str, Any] | list[Any] | tuple[Any, ...]) -> dict[str, Any]:
+    """Flatten a nested structure of dicts, lists, or tuples into a single dictionary.
+
+    This function recursively flattens dictionaries, lists, and tuples within
+    the input into a single level of keys, with each nested path joined by a slash ('/').
+    It returns a dictionary mapping these slash-joined paths to their corresponding values.
+
+    Args:
+        d (dict[str, Any] | list[Any] | tuple[Any, ...]): The data structure to flatten.
+
+    Returns:
+        dict[str, Any]: A flat dictionary containing the flattened paths as keys
+        and the corresponding values.
+    """
+    def _inner_flatten(value: Any, *, prefix: str, output: dict[str, Any]):
+        if isinstance(value, dict) and all(isinstance(k, str) for k in value.keys()):
+            if prefix != "":
+                prefix = prefix + "/"
+            for key, nested_val in value.items():
+                _inner_flatten(nested_val, prefix=prefix + key, output=output)
+        elif isinstance(value, (list, tuple)):
+            if prefix != "":
+                prefix = prefix + "/"
+            for i, nested_val in enumerate(value):
+                _inner_flatten(nested_val, prefix=prefix + str(i), output=output)
+        else:
+            output[prefix] = value
+
+    output = {}
+    _inner_flatten(d, prefix="", output=output)
+    return output

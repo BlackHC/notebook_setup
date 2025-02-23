@@ -1,4 +1,4 @@
-from blackhc.project.utils.collections.bimap import DictBimap, PersistentBimap, MappingBimap
+from blackhc.project.utils.collections.bimap import DictBimap, MappingBimap
 
 import pytest
 

@@ -20,6 +20,33 @@ def test_tree_namespace_simple():
     assert dkns.a.b == 1, "Failed on __getattribute__ method"
     assert dkns.a.c == 2, "Failed on __getattribute__ method"
     assert dkns.d == 3, "Failed on __getattribute__ method"
+    
+    
+def test_tree_namespace_from_nested_dicts():
+    nested_dict = {
+        "user": {
+            "profile": {
+                "name": "Alice",
+                "age": 30
+            },
+            "settings": {
+                "theme": "dark"
+            }
+        },
+        "posts": [
+            {
+                "title": "First Post"
+            },
+            {
+                "title": "Second Post"
+            }
+        ]
+    }
+    tree = TreeNamespace.from_nested_data(nested_dict)
+    assert tree.user.profile.name == "Alice"
+    assert tree.posts[0].title == "First Post"
+    assert tree.posts[1].title == "Second Post"
+    
 
 
 def test_tree_namespace_path():
@@ -140,6 +167,7 @@ def test_tree_namespace_schema():
 
 if __name__ == "__main__":
     test_tree_namespace_simple()
+    test_tree_namespace_from_nested_dicts()
     test_tree_namespace_path()
     test_tree_namespace_wildcard()
     test_tree_namespace_wildcard_2()
