@@ -1,5 +1,88 @@
 """
-Simple file-based object storage.
+Simple file-based object storage with automatic path generation and metadata tracking.
+
+This module provides a caching and storage system that automatically generates
+hierarchical file paths from function arguments, tracks metadata (git commit,
+timestamps, wandb run info), and supports multiple serialization formats.
+
+Core Storage Functions
+----------------------
+save_pkl, load_pkl
+    Save/load objects using pickle format.
+save_json, load_json
+    Save/load objects using JSON (via jsonpickle for complex types).
+save_pt, load_pt
+    Save/load PyTorch tensors (requires torch).
+save_pkl_or_json
+    Smart save that uses JSON for small serializable objects, pickle otherwise.
+load
+    Generic load that auto-detects the format from the file extension.
+prepare_pkl_output
+    Prepare output path and save metadata without writing data (for streaming).
+
+Metadata Functions
+------------------
+load_metadata
+    Load metadata for a specific path.
+load_all_metadata
+    Scan a directory tree and load all metadata files into a dict.
+
+Path Generation
+---------------
+generate_path
+    Generate a path from parts (dicts, lists, values).
+get_prefix_path
+    Get prefix path with optional timestamp handling (NONE, NOW, LATEST).
+
+Caching Decorator
+-----------------
+cache
+    Decorator that caches function results based on arguments. Supports:
+    - Automatic cache path generation from function arguments
+    - Multiple path schema builders (template_schema, prefix_schema, part_schema)
+    - Force refresh via `__force_refresh=True`
+    - Direct cache access via `.load()` and `.recompute()` methods
+
+Path Schema Builders
+--------------------
+template_schema
+    Build paths using a format string template, e.g., "{arg1}-{arg2}/{identifier}".
+prefix_schema
+    Build paths by specifying which args form the prefix directories.
+part_schema
+    Build paths with fine-grained control using PartLiteral, PartKW, PartIdentifier.
+
+Object Identity
+---------------
+identify
+    Associate an object with a path fragment for cache key generation.
+object_identities
+    Bimap storing object-to-path-fragment associations.
+
+Classes
+-------
+Timestamp
+    Enum for timestamp handling: NONE, NOW, LATEST.
+PartLiteral, PartKW, PartIdentifier
+    Schema part types for part_schema().
+
+Example Usage
+-------------
+>>> from blackhc.project.utils.simple_storage import cache, template_schema
+>>>
+>>> @cache(path_schema=template_schema("{dataset}/{model}/{identifier}"))
+... def train_model(dataset: str, model: str, epochs: int = 10):
+...     # expensive computation
+...     return {"accuracy": 0.95}
+>>>
+>>> # First call computes and caches
+>>> result = train_model("mnist", "cnn")
+>>> # Second call loads from cache
+>>> result = train_model("mnist", "cnn")
+>>> # Force recomputation
+>>> result = train_model("mnist", "cnn", __force_refresh=True)
+>>> # Load specific timestamp
+>>> result = train_model.load("mnist", "cnn", __timestamp="2024-01-01T00:00:00")
 """
 
 import enum
@@ -43,36 +126,36 @@ def identify(obj: _S, path_fragment: str) -> _S:
     object_identities.update(obj, path_fragment)
     return obj
 
-def get_module_name(f):
+def _get_module_name(f):
     """Get the name of the module of an object that has a __module__."""
     module = sys.modules[f.__module__]
     return module.__spec__.name if hasattr(module, "__spec__") else module.__name__
 
 
-def get_callable_full_name(f: typing.Callable):
+def _get_callable_full_name(f: typing.Callable):
     """Get the full name of a callable, including the module name."""
-    # return f"{get_module_name(f)}:{f.__qualname__}"
+    # return f"{_get_module_name(f)}:{f.__qualname__}"
     return f.__qualname__
 
 
-def escape_path_fragment(part: str):
+def _escape_path_fragment(part: str):
     """Escape a path part."""
     return urllib.parse.quote(part, safe=" +(,){:}[]%")
 
 
-def kwarg_to_path_fragment(key: str, value) -> str:
+def _kwarg_to_path_fragment(key: str, value) -> str:
     """Convert a keyword argument to a path fragment."""
-    key = value_to_path_fragment(key)
+    key = _value_to_path_fragment(key)
     if value is None:
         return f"~{key}"
     elif isinstance(value, bool):
         return f"+{key}" if value else f"-{key}"
     else:
-        value = value_to_path_fragment(value)
+        value = _value_to_path_fragment(value)
         return f"{key}:{value}" if value else key
 
 
-def value_to_path_fragment(
+def _value_to_path_fragment(
     value: float | str | int | list | dict | tuple | enum.Enum | None | object,
 ) -> str:
     """Convert a value to a path part."""
@@ -87,12 +170,12 @@ def value_to_path_fragment(
     if isinstance(value, float):
         value = format(value, ".6g")
     elif isinstance(value, list):
-        value = "[" + ",".join(map(value_to_path_fragment, value)) + "]"
+        value = "[" + ",".join(map(_value_to_path_fragment, value)) + "]"
     elif isinstance(value, tuple):
-        value = "(" + ",".join(map(value_to_path_fragment, value)) + ")"
+        value = "(" + ",".join(map(_value_to_path_fragment, value)) + ")"
     elif isinstance(value, dict):
         value = (
-            "{" + ",".join(kwarg_to_path_fragment(k, v) for k, v in value.items()) + "}"
+            "{" + ",".join(_kwarg_to_path_fragment(k, v) for k, v in value.items()) + "}"
         )
     elif isinstance(value, int):
         value = str(value)
@@ -100,10 +183,10 @@ def value_to_path_fragment(
         pass
     else:
         raise ValueError(f"Unsupported value type: {type(value)}")
-    return escape_path_fragment(str(value))
+    return _escape_path_fragment(str(value))
 
 
-def dict_to_path_fragment(kwargs: dict):
+def _dict_to_path_fragment(kwargs: dict):
     """Convert a dictionary of keyword arguments to a path fragment.
 
     Args:
@@ -115,15 +198,15 @@ def dict_to_path_fragment(kwargs: dict):
     kwarg_fragments = []
     for key, value in kwargs.items():
         if key is not None:
-            kwarg_fragments.append(kwarg_to_path_fragment(key, value))
+            kwarg_fragments.append(_kwarg_to_path_fragment(key, value))
         else:
-            kwarg_fragments.append(value_to_path_fragment(value))
-    return list_to_path_fragment(kwarg_fragments)
+            kwarg_fragments.append(_value_to_path_fragment(value))
+    return _list_to_path_fragment(kwarg_fragments)
 
 
-def list_to_path_fragment(args: list):
+def _list_to_path_fragment(args: list):
     """Convert a list of arguments to a path fragment."""
-    return "_".join(map(value_to_path_fragment, args))
+    return "_".join(map(_value_to_path_fragment, args))
 
 
 def generate_path(*parts, force_dir: bool = True) -> str:
@@ -144,18 +227,18 @@ def generate_path(*parts, force_dir: bool = True) -> str:
         if part is None:
             fragment = "__"
         elif isinstance(part, dict):
-            fragment = dict_to_path_fragment(part)
+            fragment = _dict_to_path_fragment(part)
         elif isinstance(part, list):
-            fragment = list_to_path_fragment(part)
+            fragment = _list_to_path_fragment(part)
         else:
-            fragment = value_to_path_fragment(part)
+            fragment = _value_to_path_fragment(part)
         path_parts.append(fragment)
     if force_dir:
         path_parts.append("")
     return "/".join(path_parts)
 
 
-def collect_metadata(*parts) -> dict[str]:
+def _collect_metadata(*parts) -> dict[str]:
     """Collect metadata for the current run."""
     head_commit, github_url = get_git_head_commit_and_url(os.getcwd())
     # If wandb is running, get the wandb id and url
@@ -259,7 +342,7 @@ def _align_timestamp(
 def _save_metadata(
     *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
 ) -> tuple[str, dict]:
-    metadata = collect_metadata(*parts)
+    metadata = _collect_metadata(*parts)
     prefix_path = get_prefix_path(
         *parts, root=root, timestamp=_align_timestamp(timestamp, metadata["timestamp"])
     )
@@ -615,10 +698,10 @@ def template_schema(template: str) -> typing.Callable[[dict, dict], list[str]]:
     def params_to_parts(bound_arguments: dict, identifier: str) -> list[str]:
         prefix_path = template.format(
             **{
-                key: value_to_path_fragment(value)
+                key: _value_to_path_fragment(value)
                 for key, value in bound_arguments.items()
             },
-            identifier=escape_path_fragment(identifier),
+            identifier=_escape_path_fragment(identifier),
         )
         parts = prefix_path.split("/")
         unquoted_parts = [urllib.parse.unquote(part) for part in parts]
@@ -670,7 +753,7 @@ def cache(
             if value in object_identities:
                 bound_arguments[key] = object_identities[value]
 
-        parts = path_schema(bound_args.arguments, get_callable_full_name(f))
+        parts = path_schema(bound_args.arguments, _get_callable_full_name(f))
         return get_prefix_path(*parts, root=root, timestamp=timestamp)
 
     @functools.wraps(f)

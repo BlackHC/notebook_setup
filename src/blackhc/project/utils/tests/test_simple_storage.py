@@ -7,52 +7,52 @@ import json
 
 
 def test_value_to_path_fragment():
-    assert simple_storage.value_to_path_fragment(123) == "123"
-    assert simple_storage.value_to_path_fragment(123.456) == "123.456"
-    assert simple_storage.value_to_path_fragment("test_string") == "test_string"
-    assert simple_storage.value_to_path_fragment([1, 2, 3]) == "[1,2,3]"
-    assert simple_storage.value_to_path_fragment((1, 2, 3)) == "(1,2,3)"
-    assert simple_storage.value_to_path_fragment({"key": "value"}) == "{key:value}"
-    assert simple_storage.value_to_path_fragment({"key": True}) == "{+key}"
-    assert simple_storage.value_to_path_fragment({"key": False}) == "{-key}"
-    assert simple_storage.value_to_path_fragment({None: "value"}) == "{None:value}"
-    assert simple_storage.value_to_path_fragment(123.0) == "123"
-    assert simple_storage.value_to_path_fragment(["a", "b", "c"]) == "[a,b,c]"
-    assert simple_storage.value_to_path_fragment({"a": 1, "b": 2}) == "{a:1,b:2}"
+    assert simple_storage._value_to_path_fragment(123) == "123"
+    assert simple_storage._value_to_path_fragment(123.456) == "123.456"
+    assert simple_storage._value_to_path_fragment("test_string") == "test_string"
+    assert simple_storage._value_to_path_fragment([1, 2, 3]) == "[1,2,3]"
+    assert simple_storage._value_to_path_fragment((1, 2, 3)) == "(1,2,3)"
+    assert simple_storage._value_to_path_fragment({"key": "value"}) == "{key:value}"
+    assert simple_storage._value_to_path_fragment({"key": True}) == "{+key}"
+    assert simple_storage._value_to_path_fragment({"key": False}) == "{-key}"
+    assert simple_storage._value_to_path_fragment({None: "value"}) == "{None:value}"
+    assert simple_storage._value_to_path_fragment(123.0) == "123"
+    assert simple_storage._value_to_path_fragment(["a", "b", "c"]) == "[a,b,c]"
+    assert simple_storage._value_to_path_fragment({"a": 1, "b": 2}) == "{a:1,b:2}"
 
     class TestEnum(enum.Enum):
         OPTION_A = "OptionA"
         OPTION_B = "OptionB"
 
-    assert simple_storage.value_to_path_fragment(TestEnum.OPTION_A) == "OptionA"
-    assert simple_storage.value_to_path_fragment(TestEnum.OPTION_B) == "OptionB"
+    assert simple_storage._value_to_path_fragment(TestEnum.OPTION_A) == "OptionA"
+    assert simple_storage._value_to_path_fragment(TestEnum.OPTION_B) == "OptionB"
     
     
 def test_value_to_path_fragment_unknown_type():
     with pytest.raises(ValueError, match='Unsupported value type'):
-        simple_storage.value_to_path_fragment(object())
+        simple_storage._value_to_path_fragment(object())
     
 def test_value_to_path_fragment_with_int_enum():
     class IntEnum(enum.Enum):
         OPTION_1 = 1
         OPTION_2 = 2
 
-    assert simple_storage.value_to_path_fragment(IntEnum.OPTION_1) == "OPTION_1"
-    assert simple_storage.value_to_path_fragment(IntEnum.OPTION_2) == "OPTION_2"
+    assert simple_storage._value_to_path_fragment(IntEnum.OPTION_1) == "OPTION_1"
+    assert simple_storage._value_to_path_fragment(IntEnum.OPTION_2) == "OPTION_2"
     
     
 def test_dict_to_path_fragment():
-    assert simple_storage.dict_to_path_fragment({"key": "value"}) == "key:value"
-    assert simple_storage.dict_to_path_fragment({"key1": "value1", "key2": "value2"}) == "key1:value1_key2:value2"
-    assert simple_storage.dict_to_path_fragment({"key": 123}) == "key:123"
-    assert simple_storage.dict_to_path_fragment({"key": 123.456}) == "key:123.456"
-    assert simple_storage.dict_to_path_fragment({"key": [1, 2, 3]}) == "key:[1,2,3]"
-    assert simple_storage.dict_to_path_fragment({"key": (1, 2, 3)}) == "key:(1,2,3)"
-    assert simple_storage.dict_to_path_fragment({"key": {"subkey": "subvalue"}}) == "key:{subkey:subvalue}"
-    assert simple_storage.dict_to_path_fragment({"key": None}) == "~key"
-    assert simple_storage.dict_to_path_fragment({"key": 123.0}) == "key:123"
-    assert simple_storage.dict_to_path_fragment({"key1": "value1", "key2": None}) == "key1:value1_~key2"
-    assert simple_storage.dict_to_path_fragment({None: 123.0}) == "123"
+    assert simple_storage._dict_to_path_fragment({"key": "value"}) == "key:value"
+    assert simple_storage._dict_to_path_fragment({"key1": "value1", "key2": "value2"}) == "key1:value1_key2:value2"
+    assert simple_storage._dict_to_path_fragment({"key": 123}) == "key:123"
+    assert simple_storage._dict_to_path_fragment({"key": 123.456}) == "key:123.456"
+    assert simple_storage._dict_to_path_fragment({"key": [1, 2, 3]}) == "key:[1,2,3]"
+    assert simple_storage._dict_to_path_fragment({"key": (1, 2, 3)}) == "key:(1,2,3)"
+    assert simple_storage._dict_to_path_fragment({"key": {"subkey": "subvalue"}}) == "key:{subkey:subvalue}"
+    assert simple_storage._dict_to_path_fragment({"key": None}) == "~key"
+    assert simple_storage._dict_to_path_fragment({"key": 123.0}) == "key:123"
+    assert simple_storage._dict_to_path_fragment({"key1": "value1", "key2": None}) == "key1:value1_~key2"
+    assert simple_storage._dict_to_path_fragment({None: 123.0}) == "123"
 
 
 def test_save_and_load_pkl(fs: fake_filesystem.FakeFilesystem):
@@ -110,7 +110,7 @@ def test_collect_metadata(fs: fake_filesystem.FakeFilesystem):
     root = "/tmp/blackhc.project"
     fs.create_dir(root)
     
-    metadata = simple_storage.collect_metadata("test")
+    metadata = simple_storage._collect_metadata("test")
     assert "timestamp" in metadata
     assert "git" in metadata
     assert "wandb" in metadata
