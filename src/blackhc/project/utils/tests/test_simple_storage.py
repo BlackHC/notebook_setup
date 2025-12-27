@@ -19,6 +19,11 @@ def test_value_to_path_fragment():
     assert simple_storage._value_to_path_fragment(123.0) == "123"
     assert simple_storage._value_to_path_fragment(["a", "b", "c"]) == "[a,b,c]"
     assert simple_storage._value_to_path_fragment({"a": 1, "b": 2}) == "{a:1,b:2}"
+    # Sets are sorted for deterministic output
+    assert simple_storage._value_to_path_fragment({3, 1, 2}) == "{1,2,3}"
+    assert simple_storage._value_to_path_fragment({"c", "a", "b"}) == "{a,b,c}"
+    assert simple_storage._value_to_path_fragment(frozenset([3, 1, 2])) == "{1,2,3}"
+    assert simple_storage._value_to_path_fragment(set()) == "{}"
 
     class TestEnum(enum.Enum):
         OPTION_A = "OptionA"

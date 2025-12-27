@@ -156,7 +156,7 @@ def _kwarg_to_path_fragment(key: str, value) -> str:
 
 
 def _value_to_path_fragment(
-    value: float | str | int | list | dict | tuple | enum.Enum | None | object,
+    value: float | str | int | list | dict | tuple | set | frozenset | enum.Enum | None | object,
 ) -> str:
     """Convert a value to a path part."""
     # Convert to simpler types if possible.
@@ -173,6 +173,10 @@ def _value_to_path_fragment(
         value = "[" + ",".join(map(_value_to_path_fragment, value)) + "]"
     elif isinstance(value, tuple):
         value = "(" + ",".join(map(_value_to_path_fragment, value)) + ")"
+    elif isinstance(value, (set, frozenset)):
+        # Sort for deterministic output since sets are unordered
+        sorted_values = sorted(_value_to_path_fragment(v) for v in value)
+        value = "{" + ",".join(sorted_values) + "}"
     elif isinstance(value, dict):
         value = (
             "{" + ",".join(_kwarg_to_path_fragment(k, v) for k, v in value.items()) + "}"
