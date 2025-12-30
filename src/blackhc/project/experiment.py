@@ -16,12 +16,15 @@ from os import path
 
 import dataclasses
 
-import torch
 import typing
 from laaos import TypeHandler
 
 import laaos
-import laaos.torch
+
+try:
+    import laaos.torch as laaos_torch
+except ImportError:
+    laaos_torch = None
 
 # KEEP THIS AROUND TO SET THE DIRECTORY AUTOMAGICALLY
 import blackhc.project.script
@@ -167,11 +170,15 @@ def create_experiment_store(*, result_dir, store_name=None):
     # Make sure we have a directory to store the results in, and we don't crash!
     os.makedirs(result_dir, exist_ok=True)
     safe_store_name = store_name if store_name else "results"
+    type_handlers = laaos.DefaultTypeHandlers
+    if laaos_torch is not None:
+        type_handlers = laaos_torch.TypeHandlers + type_handlers
+
     store = laaos.open_file_store(
         safe_store_name,
         prefix=result_dir,
         truncate=False,
-        type_handlers=laaos.torch.TypeHandlers + laaos.DefaultTypeHandlers,
+        type_handlers=type_handlers,
     )
 
     store["timestamp"] = int(time.time())
