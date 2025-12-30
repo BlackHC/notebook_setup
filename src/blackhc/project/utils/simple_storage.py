@@ -5,841 +5,663 @@ This module provides a caching and storage system that automatically generates
 hierarchical file paths from function arguments, tracks metadata (git commit,
 timestamps, wandb run info), and supports multiple serialization formats.
 
-Core Storage Functions
-----------------------
-save_pkl, load_pkl
-    Save/load objects using pickle format.
-save_json, load_json
-    Save/load objects using JSON (via jsonpickle for complex types).
-save_pt, load_pt
-    Save/load PyTorch tensors (requires torch).
-save_pkl_or_json
-    Smart save that uses JSON for small serializable objects, pickle otherwise.
-load
-    Generic load that auto-detects the format from the file extension.
-prepare_pkl_output
-    Prepare output path and save metadata without writing data (for streaming).
-
-Metadata Functions
-------------------
-load_metadata
-    Load metadata for a specific path.
-load_all_metadata
-    Scan a directory tree and load all metadata files into a dict.
-
-Path Generation
----------------
-generate_path
-    Generate a path from parts (dicts, lists, values).
-get_prefix_path
-    Get prefix path with optional timestamp handling (NONE, NOW, LATEST).
-
-Caching Decorator
------------------
-cache
-    Decorator that caches function results based on arguments. Supports:
-    - Automatic cache path generation from function arguments
-    - Multiple path schema builders (template_schema, prefix_schema, part_schema)
-    - Force refresh via `__force_refresh=True`
-    - Direct cache access via `.load()` and `.recompute()` methods
-
-Path Schema Builders
---------------------
-template_schema
-    Build paths using a format string template, e.g., "{arg1}-{arg2}/{identifier}".
-prefix_schema
-    Build paths by specifying which args form the prefix directories.
-part_schema
-    Build paths with fine-grained control using PartLiteral, PartKW, PartIdentifier.
-
-Object Identity
----------------
-identify
-    Associate an object with a path fragment for cache key generation.
-object_identities
-    Bimap storing object-to-path-fragment associations.
-
-Classes
--------
-Timestamp
-    Enum for timestamp handling: NONE, NOW, LATEST.
-PartLiteral, PartKW, PartIdentifier
-    Schema part types for part_schema().
+Key Features
+------------
+- Template-based path generation with automatic suffix for unlisted arguments
+- Object identity mapping for complex objects (models, datasets)
+- Versioning with timestamps
+- Auto-format detection (JSON, pickle, PyTorch)
+- Caching decorator with `.load()` and `.recompute()` accessors
 
 Example Usage
 -------------
->>> from blackhc.project.utils.simple_storage import cache, template_schema
+>>> from blackhc.project.utils.simple_storage import Storage, template, identify
 >>>
->>> @cache(path_schema=template_schema("{dataset}/{model}/{identifier}"))
+>>> storage = Storage("cache")
+>>>
+>>> # Direct save/load
+>>> storage.save(result, "experiments", {"model": "cnn", "epochs": 10})
+>>> result = storage.load("experiments", {"model": "cnn", "epochs": 10})
+>>>
+>>> # With caching decorator - remaining args auto-appended to path
+>>> @storage.cache(template("{dataset}/{identifier}"))
 ... def train_model(dataset: str, model: str, epochs: int = 10):
-...     # expensive computation
 ...     return {"accuracy": 0.95}
 >>>
->>> # First call computes and caches
->>> result = train_model("mnist", "cnn")
->>> # Second call loads from cache
->>> result = train_model("mnist", "cnn")
->>> # Force recomputation
->>> result = train_model("mnist", "cnn", __force_refresh=True)
->>> # Load specific timestamp
->>> result = train_model.load("mnist", "cnn", __timestamp="2024-01-01T00:00:00")
+>>> result = train_model("mnist", "cnn")  # Computes and caches
+>>> result = train_model("mnist", "cnn")  # Loads from cache
+>>> result = train_model("mnist", "cnn", _force_refresh=True)  # Force recompute
+>>> result = train_model.load("mnist", "cnn")  # Load directly
 """
+
+from __future__ import annotations
 
 import enum
 import functools
 import inspect
 import json
-import jsonpickle
 import os
 import pickle
-import sys
-import typing
+import string
 import urllib.parse
 import weakref
-
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Literal, TypeVar
 
-import blackhc.project
-from blackhc.project.experiment import get_git_head_commit_and_url
+import jsonpickle
+
 from blackhc.project.utils.collections.weakref_utils import WeakKeyIdMap
 from blackhc.project.utils.collections.bimap import MappingBimap
+from blackhc.project.experiment import get_git_head_commit_and_url
 
 try:
     import wandb
 except ImportError:
     wandb = None
 
-
 try:
     import torch
 except ImportError:
     torch = None
-    
-
-object_identities: MappingBimap[object, str] = MappingBimap(WeakKeyIdMap(), weakref.WeakValueDictionary())
-
-_S = typing.TypeVar("_S")
-
-def identify(obj: _S, path_fragment: str) -> _S:
-    """Identify an object and return the same object."""
-    object_identities.update(obj, path_fragment)
-    return obj
-
-def _get_module_name(f):
-    """Get the name of the module of an object that has a __module__."""
-    module = sys.modules[f.__module__]
-    return module.__spec__.name if hasattr(module, "__spec__") else module.__name__
 
 
-def _get_callable_full_name(f: typing.Callable):
-    """Get the full name of a callable, including the module name."""
-    # return f"{_get_module_name(f)}:{f.__qualname__}"
-    return f.__qualname__
+T = TypeVar("T")
 
 
-def _escape_path_fragment(part: str):
-    """Escape a path part."""
+# =============================================================================
+# Value Formatting
+# =============================================================================
+
+
+def _escape_path_fragment(part: str) -> str:
+    """Escape a path part for filesystem safety."""
     return urllib.parse.quote(part, safe=" +(,){:}[]%")
 
 
-def _kwarg_to_path_fragment(key: str, value) -> str:
-    """Convert a keyword argument to a path fragment."""
-    key = _value_to_path_fragment(key)
+def _format_value(value: Any) -> str:
+    """Convert a value to a path fragment."""
     if value is None:
-        return f"~{key}"
-    elif isinstance(value, bool):
-        return f"+{key}" if value else f"-{key}"
-    else:
-        value = _value_to_path_fragment(value)
-        return f"{key}:{value}" if value else key
+        return "None"
 
-
-def _value_to_path_fragment(
-    value: float | str | int | list | dict | tuple | set | frozenset | enum.Enum | None | object,
-) -> str:
-    """Convert a value to a path part."""
-    # Convert to simpler types if possible.
-    if value is None:
-        value = str(value)
-    elif isinstance(value, float) and value.is_integer():
+    if isinstance(value, float) and value.is_integer():
         value = int(value)
-    elif isinstance(value, enum.Enum):
-        value = value.value if isinstance(value.value, str) else value.name
 
-    if isinstance(value, float):
-        value = format(value, ".6g")
-    elif isinstance(value, list):
-        value = "[" + ",".join(map(_value_to_path_fragment, value)) + "]"
-    elif isinstance(value, tuple):
-        value = "(" + ",".join(map(_value_to_path_fragment, value)) + ")"
-    elif isinstance(value, (set, frozenset)):
-        # Sort for deterministic output since sets are unordered
-        sorted_values = sorted(_value_to_path_fragment(v) for v in value)
-        value = "{" + ",".join(sorted_values) + "}"
-    elif isinstance(value, dict):
-        value = (
-            "{" + ",".join(_kwarg_to_path_fragment(k, v) for k, v in value.items()) + "}"
-        )
-    elif isinstance(value, int):
-        value = str(value)
-    elif isinstance(value, str):
-        pass
-    else:
-        raise ValueError(f"Unsupported value type: {type(value)}")
-    return _escape_path_fragment(str(value))
+    match value:
+        case bool():
+            return str(value)
+        case int():
+            return str(value)
+        case float():
+            return format(value, ".6g")
+        case str():
+            return _escape_path_fragment(value)
+        case enum.Enum():
+            return value.value if isinstance(value.value, str) else value.name
+        case list():
+            inner = ",".join(_format_value(v) for v in value)
+            return f"[{inner}]"
+        case tuple():
+            inner = ",".join(_format_value(v) for v in value)
+            return f"({inner})"
+        case set() | frozenset():
+            sorted_values = sorted(_format_value(v) for v in value)
+            return "{" + ",".join(sorted_values) + "}"
+        case dict():
+            pairs = [_format_kwarg(k, v) for k, v in value.items()]
+            return "{" + ",".join(pairs) + "}"
+        case _:
+            raise TypeError(
+                f"Cannot format value of type {type(value).__name__}: {value!r}"
+            )
 
 
-def _dict_to_path_fragment(kwargs: dict):
-    """Convert a dictionary of keyword arguments to a path fragment.
+def _format_kwarg(key: Any, value: Any) -> str:
+    """Format a key=value pair for path."""
+    formatted_key = _format_value(key)
+    if value is None:
+        return f"~{formatted_key}"
+    if isinstance(value, bool):
+        return f"+{formatted_key}" if value else f"-{formatted_key}"
+    return f"{formatted_key}:{_format_value(value)}"
 
-    Args:
-        kwargs (dict): The dictionary of keyword arguments to convert to a path fragment.
-        incl_keys (bool): Whether to include the keys in the path fragment.
-    Returns:
-        str: The path fragment.
-    """
+
+def _format_kwargs_fragment(kwargs: dict[Any, Any]) -> str:
+    """Format a dict of kwargs as underscore-separated pairs."""
     kwarg_fragments = []
     for key, value in kwargs.items():
-        if key is not None:
-            kwarg_fragments.append(_kwarg_to_path_fragment(key, value))
+        # Special case: None key is shortened.
+        if key is None:
+            kwarg_fragments.append(_format_value(value))
         else:
-            kwarg_fragments.append(_value_to_path_fragment(value))
+            kwarg_fragments.append(_format_kwarg(key, value))
     return _list_to_path_fragment(kwarg_fragments)
 
 
-def _list_to_path_fragment(args: list):
+def _list_to_path_fragment(args: list) -> str:
     """Convert a list of arguments to a path fragment."""
-    return "_".join(map(_value_to_path_fragment, args))
+    return "_".join(_format_value(v) for v in args)
 
 
-def generate_path(*parts, force_dir: bool = True) -> str:
+def _format_arg(arg: Any) -> str:
+    if arg is None:
+        return "__"
+    elif isinstance(arg, dict):
+        return _format_kwargs_fragment(arg)
+    elif isinstance(arg, list):
+        return _list_to_path_fragment(arg)
+    else:
+        return _format_value(arg)
+
+
+# =============================================================================
+# Object Identity Registry
+# =============================================================================
+
+
+class ObjectIdentityRegistry:
     """
-    Generates a path based on the given parts.
+    Maps objects to path fragments for cache key generation.
 
-    To ensure that a new sub-directory is created, add None at the end.
+    Useful when you want to pass complex objects (models, datasets) as function
+    arguments but have them represented as simple strings in cache paths.
 
-    Args:
-        parts (list): The parts of the path.
-        force_dir (bool): Whether to force the path to be a directory.
+    Example:
+        registry = ObjectIdentityRegistry()
 
-    Returns:
-        str: The generated path.
+        model = load_pretrained_model("gpt2")
+        registry.identify(model, "gpt2")
+
+        # When building cache paths, model becomes "gpt2"
     """
-    path_parts = []
-    for part in parts:
-        if part is None:
-            fragment = "__"
-        elif isinstance(part, dict):
-            fragment = _dict_to_path_fragment(part)
-        elif isinstance(part, list):
-            fragment = _list_to_path_fragment(part)
-        else:
-            fragment = _value_to_path_fragment(part)
-        path_parts.append(fragment)
-    if force_dir:
-        path_parts.append("")
-    return "/".join(path_parts)
+
+    def __init__(self):
+        self._bimap: MappingBimap[object, str] = MappingBimap(
+            WeakKeyIdMap(), weakref.WeakValueDictionary()
+        )
+
+    def identify(self, obj: T, path_fragment: str) -> T:
+        """Associate an object with a path fragment. Returns the object for chaining."""
+        self._bimap.update(obj, path_fragment)
+        return obj
+
+    def get(self, obj: Any, default: Any = None) -> str | None:
+        """Get the path fragment for an object, or default if not registered."""
+        result = self._bimap.get_value(obj)
+        return result if result is not None else default
+
+    def resolve(self, obj: Any) -> Any:
+        """Return the path fragment if registered, otherwise the original object."""
+        result = self._bimap.get_value(obj)
+        return result if result is not None else obj
+
+    def __contains__(self, obj: Any) -> bool:
+        return obj in self._bimap
+
+    def __getitem__(self, obj: Any) -> str:
+        result = self._bimap.get_value(obj)
+        if result is None:
+            raise KeyError(obj)
+        return result
 
 
-def _collect_metadata(*parts) -> dict[str]:
-    """Collect metadata for the current run."""
-    head_commit, github_url = get_git_head_commit_and_url(os.getcwd())
-    # If wandb is running, get the wandb id and url
-    wandb_id = None
-    wandb_url = None
-    if wandb is not None and wandb.run is not None:
+# Global registry
+object_identities = ObjectIdentityRegistry()
+
+
+def identify(obj: T, path_fragment: str) -> T:
+    """Register an object with a path fragment in the global registry."""
+    return object_identities.identify(obj, path_fragment)
+
+
+# =============================================================================
+# Metadata
+# =============================================================================
+
+
+@dataclass
+class Metadata:
+    """Metadata for a stored artifact."""
+
+    timestamp: str
+    git_commit: str = ""
+    git_url: str = ""
+    wandb_id: str = ""
+    wandb_url: str = ""
+    path_parts: list[str] = field(default_factory=list)
+
+
+def _collect_metadata(parts: list[str]) -> Metadata:
+    """Collect metadata for current environment."""
+    git_commit, git_url = get_git_head_commit_and_url(os.getcwd())
+
+    wandb_id = wandb_url = None
+    if wandb and wandb.run:
         wandb_id = wandb.run.id
         wandb_url = wandb.run.get_url()
 
-    metadata = dict(
+    return Metadata(
         timestamp=datetime.now().isoformat(),
-        git=dict(commit=head_commit, url=github_url),
-        wandb=dict(id=wandb_id, url=wandb_url),
-        parts=list(parts),
+        git_commit=git_commit,
+        git_url=git_url,
+        wandb_id=wandb_id,
+        wandb_url=wandb_url,
+        path_parts=list(parts),
     )
-    return metadata
 
 
-class Timestamp(enum.Enum):
-    """Whether to use a timestamp or not (and if so, whether to use the current timestamp or the latest one)."""
-
-    NONE = "none"
-    NOW = "now"
-    LATEST = "latest"
+# =============================================================================
+# Path Building
+# =============================================================================
 
 
-def get_prefix_path(
-    *parts,
-    root: str = "",
-    timestamp: Timestamp | str | datetime = Timestamp.NONE,
-    force_dir: bool = True,
-) -> str:
-    """Get the prefix path for the given parts, root, and timestamp. The path is used as base path for saving and loading.
-    If timestamp != Timestamp.NONE, we create a directory and use timestamps as subdirectories.
+@dataclass
+class PathSpec:
+    """
+    Specifies how to build a cache path from function arguments.
 
-    For Timestamp.LATEST, we find the latest subdirectory in the prefix path (last by sorting).
+    Use template() to create instances.
+    """
+
+    template: str
+    include_remaining: bool = True
+
+    def build(
+        self,
+        bound_args: dict[str, Any],
+        identifier: str,
+        identity_registry: ObjectIdentityRegistry | None = None,
+    ) -> list[str | dict]:
+        """Build path parts from bound arguments."""
+        resolved_args = {}
+        for key, value in bound_args.items():
+            if identity_registry and value in identity_registry:
+                resolved_args[key] = identity_registry.get(value)
+            else:
+                resolved_args[key] = value
+
+        format_dict = {k: _format_arg(v) for k, v in resolved_args.items()}
+        format_dict["identifier"] = _escape_path_fragment(identifier)
+
+        try:
+            formatted = self.template.format(**format_dict)
+        except KeyError as e:
+            raise ValueError(f"Template references unknown argument: {e}") from e
+
+        parts: list[str | dict] = [
+            urllib.parse.unquote(p) for p in formatted.split("/") if p
+        ]
+
+        if self.include_remaining:
+            formatter = string.Formatter()
+            used_keys = {
+                field_name.split(".")[0].split("[")[0]
+                for _, field_name, _, _ in formatter.parse(self.template)
+                if field_name is not None
+            }
+            if "identifier" not in used_keys:
+                parts.append(format_dict["identifier"])
+                used_keys.add("identifier")
+
+            remaining = {k: v for k, v in format_dict.items() if k not in used_keys}
+            if remaining:
+                parts.append(remaining)
+
+        return parts
+
+
+def template(spec: str, *, include_remaining: bool = True) -> PathSpec:
+    """
+    Create a path specification from a template string.
 
     Args:
-        parts (list): The parts of the path.
-        root (str): The root of the path.
-        timestamp (Timestamp | str | datetime): The timestamp of the path.
-        force_dir (bool): Whether to force the path to be a directory.
-    Returns:
-        str: The prefix path.
+        spec: Format string with {arg} placeholders and optional {identifier}
+        include_remaining: If True (default), args not in template are appended as suffix
+
+    Examples:
+        # Remaining args auto-appended
+        template("{dataset}/{model}/{identifier}")
+        # With dataset="mnist", model="cnn", epochs=10:
+        # -> "mnist/cnn/my_func/epochs:10/"
+
+        # Only use listed args
+        template("{dataset}/{identifier}", include_remaining=False)
     """
-    base_prefix_path = os.path.join(root, generate_path(*parts, force_dir=force_dir))
-    match timestamp:
-        case Timestamp.NONE:
-            prefix_path = base_prefix_path
-        case Timestamp.LATEST:
-            # Find all subdirs in the prefix path
-            subdirs = sorted(
-                [
-                    d
-                    for d in os.listdir(base_prefix_path)
-                    if os.path.isdir(os.path.join(base_prefix_path, d))
-                ]
-            )
-            if not subdirs:
-                raise FileNotFoundError(
-                    "No subdirectories found in the prefix path", base_prefix_path
-                )
-            latest_subdir = subdirs[-1]
-            prefix_path = os.path.join(base_prefix_path, latest_subdir, "")
-        case Timestamp.NOW:
-            timestamp = datetime.now().isoformat()
-            prefix_path = os.path.join(base_prefix_path, timestamp, "")
-        case str():
-            prefix_path = os.path.join(base_prefix_path, timestamp, "")
-        case datetime():
-            prefix_path = os.path.join(base_prefix_path, timestamp.isoformat(), "")
-        case _:
-            raise ValueError(f"Invalid timestamp: {timestamp}")
-    return prefix_path
+    return PathSpec(template=spec, include_remaining=include_remaining)
 
 
-def _combine_path(prefix_path, ext) -> str:
-    if prefix_path.endswith(ext):
-        print("🚨 Warning: prefix_path", prefix_path, " already ends with ext", ext)
-        return prefix_path
-
-    if prefix_path.endswith("/"):
-        return f"{prefix_path}{ext}"
-    return f"{prefix_path}.{ext}"
+# =============================================================================
+# Storage Class
+# =============================================================================
 
 
-def _align_timestamp(
-    timestamp: Timestamp | str | datetime, master_timestamp: str | datetime
-) -> str | datetime:
-    match timestamp:
-        case Timestamp.NOW:
-            return (
-                master_timestamp.isoformat()
-                if isinstance(master_timestamp, datetime)
-                else master_timestamp
-            )
-        case _:
-            return timestamp
+class Storage:
+    """
+    File-based storage with automatic path generation and metadata.
 
+    Features:
+    - Hierarchical paths from function arguments
+    - Object identity resolution for complex objects
+    - Automatic metadata (git, wandb, timestamp)
+    - Versioning with timestamps
+    - Multiple serialization formats (auto-detected)
 
-def _save_metadata(
-    *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> tuple[str, dict]:
-    metadata = _collect_metadata(*parts)
-    prefix_path = get_prefix_path(
-        *parts, root=root, timestamp=_align_timestamp(timestamp, metadata["timestamp"])
-    )
-    metadata_string = jsonpickle.encode(metadata, unpicklable=False)
-    os.makedirs(os.path.dirname(prefix_path), exist_ok=True)
-    with open(_combine_path(prefix_path, "meta.json"), "wt", encoding="utf-8") as f:
-        f.write(metadata_string)
-    return prefix_path, metadata
+    Example:
+        storage = Storage("cache/experiments")
 
+        # Direct save/load
+        storage.save(result, "mnist", {"model": "cnn", "epochs": 10})
+        result = storage.load("mnist", {"model": "cnn", "epochs": 10})
 
-def load_metadata(
-    *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> dict:
-    assert timestamp != Timestamp.NOW
-    prefix_path = get_prefix_path(*parts, root=root, timestamp=timestamp)
-    with open(_combine_path(prefix_path, "meta.json"), "rt", encoding="utf-8") as f:
-        return json.load(f)
+        # With decorator
+        @storage.cache(template("{dataset}/{identifier}"))
+        def train(dataset: str, model: str, epochs: int = 10):
+            return expensive_computation()
+    """
 
+    def __init__(
+        self,
+        root: str | Path,
+        identity_registry: ObjectIdentityRegistry | None = None,
+        *,
+        verbose: bool = True,
+    ):
+        self.root = Path(root)
+        self.identity_registry = identity_registry or object_identities
+        self.verbose = verbose
 
-def prepare_pkl_output(
-    *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> tuple[str, dict]:
-    prefix_path, metadata = _save_metadata(*parts, root=root, timestamp=timestamp)
-    output_path = _combine_path(prefix_path, "data.pkl")
-    return output_path, metadata
+    def _parts_to_path(self, *parts: str | dict | list | None) -> str:
+        """Convert parts to a path string."""
+        return "/".join(_format_value(part) for part in parts if part) + "/"
 
+    def get_path(
+        self,
+        *parts: str | dict | list | None,
+        version: bool | str | datetime = False,
+        for_save: bool = False,
+    ) -> Path:
+        """Get the full path for given parts and version.
 
-def save_pkl(
-    obj, *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> tuple[str, dict]:
-    prefix_path, metadata = _save_metadata(*parts, root=root, timestamp=timestamp)
-    with open(_combine_path(prefix_path, "data.pkl"), "wb") as f:
-        pickle.dump(obj, f)
-    return prefix_path, metadata
+        Args:
+            *parts: Path components
+            version: False=no versioning, True=auto (latest for load, now for save),
+                     str/datetime=explicit version
+            for_save: If True, version=True means new timestamp; if False, means latest
+        """
+        base = self.root / self._parts_to_path(*parts)
 
+        if version is False:
+            return base
+        elif version is True:
+            if for_save:
+                return base / datetime.now().isoformat()
+            else:
+                # Load: get latest
+                if not base.exists():
+                    raise FileNotFoundError(f"No versions at {base}")
+                subdirs = sorted(d for d in base.iterdir() if d.is_dir())
+                if not subdirs:
+                    raise FileNotFoundError(f"No version subdirs in {base}")
+                return subdirs[-1]
+        elif isinstance(version, datetime):
+            return base / version.isoformat()
+        else:
+            return base / str(version)
 
-def load_pkl(
-    *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-):
-    assert timestamp != Timestamp.NOW
-    prefix_path = get_prefix_path(*parts, root=root, timestamp=timestamp)
-    with open(_combine_path(prefix_path, "data.pkl"), "rb") as f:
-        return pickle.load(f)
+    def _find_data_file(self, path: Path) -> Path:
+        """Find the data file in a storage directory."""
+        candidates = list(path.glob("data.*"))
+        if not candidates:
+            raise FileNotFoundError(f"No data file in {path}")
+        if len(candidates) > 1:
+            raise RuntimeError(f"Multiple data files: {candidates}")
+        return candidates[0]
 
+    def _detect_format(
+        self, obj: Any
+    ) -> tuple[Literal["json", "pkl", "pt"], bytes | None]:
+        """
+        Detect best format for object, returning (format, optional pre-serialized bytes).
 
-def save_pt(
-    obj, *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> tuple[str, dict]:
-    prefix_path, metadata = _save_metadata(*parts, root=root, timestamp=timestamp)
-    with open(_combine_path(prefix_path, "data.pt"), "wb") as f:
-        torch.save(obj, f)
-    return prefix_path, metadata
-
-
-def load_pt(
-    *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-):
-    assert timestamp != Timestamp.NOW
-    prefix_path = get_prefix_path(*parts, root=root, timestamp=timestamp)
-    with open(_combine_path(prefix_path, "data.pt"), "rb") as f:
-        return torch.load(f)
-
-
-def save_json(
-    obj, *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> tuple[str, dict]:
-    prefix_path, metadata = _save_metadata(*parts, root=root, timestamp=timestamp)
-    with open(_combine_path(prefix_path, "data.json"), "wt", encoding="utf-8") as f:
-        f.write(jsonpickle.encode(obj, indent=2, keys=True))
-    return prefix_path, metadata
-
-
-def load_json(
-    *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-):
-    assert timestamp != Timestamp.NOW
-    prefix_path = get_prefix_path(*parts, root=root, timestamp=timestamp)
-    with open(_combine_path(prefix_path, "data.json"), "rt", encoding="utf-8") as f:
-        return jsonpickle.decode(f.read(), keys=True)
-
-
-def save_pkl_or_json(
-    obj, *parts, root: str = "", timestamp: Timestamp | str | datetime = Timestamp.NONE
-) -> tuple[str, dict]:
-    prefix_path, metadata = _save_metadata(*parts, root=root, timestamp=timestamp)
-
-    # Pickle the object into bytes
-    pickled_obj = pickle.dumps(obj)
-
-    # Check if the pickled size is less than 256KB
-    if len(pickled_obj) < 256 * 1024:
+        Returns pre-serialized pickle bytes when available to avoid double serialization.
+        """
+        if torch and isinstance(obj, torch.Tensor):
+            return "pt", None
         try:
-            # Try to save as JSON
-            json_obj = json.loads(json.dumps(obj))
-            assert json_obj == obj
-            with open(
-                _combine_path(prefix_path, "data.json"), "wt", encoding="utf-8"
-            ) as f:
-                f.write(jsonpickle.encode(obj, indent=2, keys=True))
-            return prefix_path, metadata
-        except (TypeError, OverflowError, AssertionError):
-            # If it fails, save as pickle instead.
-            pass
+            pickled_bytes = pickle.dumps(obj)
+            if len(pickled_bytes) < 256 * 1024:
+                if json.loads(json.dumps(obj)) == obj:
+                    return "json", pickled_bytes
+            return "pkl", pickled_bytes
+        except (TypeError, OverflowError, AssertionError, AttributeError):
+            return "pkl", pickle.dumps(obj)
 
-    with open(_combine_path(prefix_path, "data.pkl"), "wb") as f:
-        f.write(pickled_obj)
-    return prefix_path, metadata
+    def prepare_output(
+        self,
+        *parts: str | dict | list | None,
+        version: bool | str | datetime = False,
+        fmt: Literal["pkl", "json", "pt", "auto"] = "pkl",
+    ) -> tuple[Path, Metadata]:
+        """
+        Prepare output path without writing data.
 
+        Useful for streaming writes or custom serialization.
 
-def load(
-    *parts,
-    root: str = "",
-    timestamp: Timestamp | str | datetime = Timestamp.NONE,
-    force_dir: bool = True,
-):
-    assert timestamp != Timestamp.NOW
-    prefix_path = get_prefix_path(
-        *parts, root=root, timestamp=timestamp, force_dir=force_dir
-    )
-    print(prefix_path)
-    # Find the *data.* file (can either end in pkl, json or ot)
-    data_files = [
-        f
-        for f in os.listdir(os.path.dirname(prefix_path))
-        if f.startswith(os.path.basename(prefix_path))
-        and f.endswith(("data.pt", "data.pkl", "data.json"))
-    ]
+        Returns:
+            Tuple of (data_file_path, metadata)
+        """
+        path = self.get_path(*parts, version=version, for_save=True)
+        path.mkdir(parents=True, exist_ok=True)
 
-    if len(data_files) == 1:
-        data_file = os.path.join(os.path.dirname(prefix_path), data_files[0])
-        if data_file.endswith(".pkl"):
-            with open(data_file, "rb") as f:
-                return pickle.load(f)
-        elif data_file.endswith(".json"):
-            with open(data_file, "rt", encoding="utf-8") as f:
-                return jsonpickle.decode(f.read(), keys=True)
-        elif data_file.endswith(".pt"):
-            with open(data_file, "rb") as f:
-                return torch.load(f)
+        metadata = _collect_metadata(list(parts))
+        (path / "meta.json").write_text(
+            jsonpickle.encode(asdict(metadata), unpicklable=False)
+        )
+
+        return path / f"data.{fmt}", metadata
+
+    def save(
+        self,
+        obj: Any,
+        *parts: str | dict | list | None,
+        version: bool | str | datetime = False,
+        fmt: Literal["json", "pkl", "pt", "auto"] = "auto",
+    ) -> tuple[Path, Metadata]:
+        """
+        Save an object with automatic path generation and metadata.
+
+        Args:
+            obj: Object to save
+            *parts: Path components (strings, dicts, lists)
+            version: False=no version dir, True=new timestamp, str/datetime=explicit
+            fmt: Serialization format (auto-detected if "auto")
+
+        Returns:
+            Tuple of (path, metadata)
+        """
+        pickled_bytes = None
+        if fmt == "auto":
+            fmt, pickled_bytes = self._detect_format(obj)
+
+        path, metadata = self.prepare_output(*parts, version=version, fmt=fmt)
+
+        if fmt == "json":
+            path.write_text(jsonpickle.encode(obj, indent=2, keys=True))
+        elif fmt == "pkl":
+            if pickled_bytes is None:
+                pickled_bytes = pickle.dumps(obj)
+            path.write_bytes(pickled_bytes)
+        elif fmt == "pt":
+            if not torch:
+                raise ImportError("torch required for .pt format")
+            torch.save(obj, path)
+
+        return path, metadata
+
+    def load(
+        self,
+        *parts: str | dict | list | None,
+        version: bool | str | datetime = False,
+    ) -> Any:
+        """
+        Load an object, auto-detecting format.
+
+        Args:
+            *parts: Path components
+            version: False=no version, True=latest, or explicit str/datetime
+
+        Returns:
+            The loaded object
+        """
+        path = self.get_path(*parts, version=version)
+        data_file = self._find_data_file(path)
+
+        suffix = data_file.suffix
+        if suffix == ".json":
+            return jsonpickle.decode(data_file.read_text(), keys=True)
+        elif suffix == ".pkl":
+            return pickle.loads(data_file.read_bytes())
+        elif suffix == ".pt":
+            if not torch:
+                raise ImportError("torch required for .pt format")
+            return torch.load(data_file)
         else:
-            raise ValueError(f"Unsupported file type: {data_file}")
-    elif len(data_files) > 1:
-        raise RuntimeError(
-            "Multiple data files found for the same prefix path", data_files
-        )
-    else:
-        raise FileNotFoundError("No data file found for the prefix path", prefix_path)
+            raise ValueError(f"Unknown format: {suffix}")
 
+    def load_metadata(
+        self,
+        *parts: str | dict | list | None,
+        version: bool | str | datetime = False,
+    ) -> Metadata:
+        """Load only metadata without loading the data."""
+        path = self.get_path(*parts, version=version)
+        meta_file = path / "meta.json"
+        return Metadata(**json.loads(meta_file.read_text()))
 
-def load_all_metadata(root: str) -> dict[str, dict]:
-    """Scans for *meta.json files in root and loads all meta files into a path->metadata dict."""
-    meta_files = [
-        os.path.join(dirpath, filename)
-        for dirpath, _, filenames in os.walk(root)
-        for filename in filenames
-        if filename.endswith("meta.json")
-    ]
+    def exists(
+        self,
+        *parts: str | dict | list | None,
+        version: bool | str | datetime = False,
+    ) -> bool:
+        """Check if cached data exists."""
+        try:
+            path = self.get_path(*parts, version=version)
+            self._find_data_file(path)
+            return True
+        except FileNotFoundError:
+            return False
 
-    meta_data = {}
-    for meta_file in meta_files:
-        if meta_file.endswith(".meta.json"):
-            path = meta_file.removesuffix(".meta.json")
-        else:
-            path = meta_file.removesuffix("meta.json")
-        with open(meta_file, "rt", encoding="utf-8") as f:
-            meta_data[path] = json.load(f)
+    def load_all_metadata(self) -> dict[str, dict]:
+        """Scans for meta.json files and loads all metadata."""
+        meta_data = {}
+        for dirpath, _, filenames in os.walk(self.root):
+            if "meta.json" in filenames:
+                meta_file = Path(dirpath) / "meta.json"
+                path = str(meta_file.parent) + "/"
+                meta_data[path] = json.loads(meta_file.read_text())
+        return meta_data
 
-    return meta_data
-
-
-@dataclass
-class PartLiteral:
-    """A literal part of the path."""
-
-    value: str
-
-
-@dataclass
-class PartKW:
-    """A literal keyword argument part of the path."""
-
-    key: str
-    value: str
-
-
-class PartIdentifier:
-    """The identifier part of the path, which gets filled in by the identifier argument."""
-
-    pass
-
-
-def part_schema(*schema_parts: list):
-    """Build a path schema from a list of schema parts.
-
-    Example:
-        schema = part_schema(
-            PartSchemaLiteral("fixed_dataset"),
-            ("arg1", PartSchemaKW("split", "test"), "arg2")),
-            PartSchemaIdentifier
-        )
-
-        assert schema({"arg1": "value1", "arg2": "value2"}, "test_id") == [
-            "fixed_dataset",
-            {"arg1": "value1", "split": "test", "arg2": "value2"},
-            "test_id"
-        ]
-
-        And creates "{root}/fixed_dataset/arg1:{arg1}_split:test_arg2:arg{2}" as prefix path (excl timestamps).
-    """
-
-    def params_to_parts(bound_arguments: dict, identifier: str) -> list[str]:
-        """Convert a list of arguments and a dictionary of keyword arguments to a list of path parts using the given schema."""
-
-        def missing_arg_error(arg):
-            raise ValueError(
-                "Missing schema arg:",
-                arg,
-                " in ",
-                schema_parts,
-                " for ",
-                bound_arguments,
-                "(or use $identifier for the identifier"
-                "or PartSchemaLiteral or PartSchemaKW for literal parts).",
-            )
-
-        parts = []
-        for schema_part in schema_parts:
-            if isinstance(schema_part, PartLiteral):
-                part = schema_part.value
-            elif isinstance(schema_part, PartKW):
-                part = {schema_part.key: schema_part.value}
-            elif schema_part == PartIdentifier or schema_part == "$identifier":
-                part = identifier
-            elif isinstance(schema_part, str):
-                if schema_part in bound_arguments:
-                    part = bound_arguments[schema_part]
-                else:
-                    missing_arg_error(schema_part)
-            elif isinstance(schema_part, (set, tuple)):
-                part = {}
-                for arg in schema_part:
-                    if isinstance(arg, PartLiteral):
-                        if None in part:
-                            raise ValueError(
-                                "Multiple PartLiteral (or Identifier) not allowed in set schema parts"
-                            )
-                        part[None] = arg.value
-                    elif isinstance(arg, PartKW):
-                        part[arg.key] = arg.value
-                    elif arg == PartIdentifier or arg == "$identifier":
-                        part[None] = identifier
-                    elif arg in bound_arguments:
-                        part[arg] = bound_arguments[arg]
-                    else:
-                        missing_arg_error(schema_part)
-            elif isinstance(schema_part, list):
-                part = []
-                for arg in schema_part:
-                    if isinstance(arg, PartLiteral):
-                        part.append(arg.value)
-                    elif arg in bound_arguments:
-                        part.append(bound_arguments[arg])
-                    elif isinstance(arg, PartKW):
-                        raise ValueError("PartKW is not allowed in list schema parts")
-                    else:
-                        missing_arg_error(schema_part)
-            else:
-                raise ValueError("Invalid schema part:", schema_part)
-            parts.append(part)
-        return parts
-
-    return params_to_parts
-
-
-def prefix_schema(*prefix_args: list[str]) -> typing.Callable[[dict, dict], list[str]]:
-    """Build a path schema from a list of prefix arguments.
-
-    Any "/" in the prefix args is treated as a separator between different parts of the path.
-
-    Example:
-        schema = prefix_schema(["arg1", "/" "arg2"])
-        parts = schema({"arg1": "value1", "arg2": "value2", "arg3": "value3"}, "test_id")
-        assert parts == [
-            {"arg1": "value1"},
-            {"arg2": "value2"},
-            "test_id",
-            {"arg3": "value3"}
-        ]
-
-        And creates "{root}/arg1:{arg1}/arg2:arg{2}/test_id/arg3:value3" as prefix path (excl timestamps).
-    """
-
-    def params_to_parts(bound_arguments: dict, identifier: str) -> list[str]:
-        """Build a path using prefix args, identifier, and remaining args."""
-        parts = []
-        prefix_dict = {}
-        used_args = set()
-        for arg in prefix_args:
-            if arg == "/":
-                if prefix_dict:
-                    parts.append(prefix_dict)
-                    prefix_dict = {}
-            elif isinstance(arg, str):
-                prefix_dict[arg] = bound_arguments[arg]
-                used_args.add(arg)
-            elif isinstance(arg, (set, tuple)):
-                if prefix_dict:
-                    parts.append(prefix_dict)
-                    prefix_dict = {}
-                for key in arg:
-                    prefix_dict[key] = bound_arguments[key]
-                    used_args.add(key)
-                parts.append(prefix_dict)
-                prefix_dict = {}
-            elif isinstance(arg, list):
-                if prefix_dict:
-                    parts.append(prefix_dict)
-                    prefix_dict = {}
-
-                prefix_list = []
-                for key in arg:
-                    prefix_list.append(bound_arguments[key])
-                    used_args.add(key)
-                parts.append(prefix_list)
-            else:
-                raise ValueError(f"Invalid prefix arg: {arg}")
-        if prefix_dict:
-            parts.append(prefix_dict)
-        parts.append(identifier)
-        suffix_dict = {
-            arg: bound_arguments[arg] for arg in bound_arguments if arg not in used_args
-        }
-        parts.append(suffix_dict)
-        return parts
-
-    return params_to_parts
-
-
-def template_schema(template: str) -> typing.Callable[[dict, dict], list[str]]:
-    """Format the parts of the path using the given template by calling `.format` on it with the bound arguments and the identifier.
-
-    Example:
-        schema = template_schema("{arg1}-{arg2}/{identifier}")
-        parts = schema({"arg1": "value1", "arg2": "value2"}, "test_id")
-        assert parts == [
-            "value1:value2",
-            "test_id"
-        ]
-
-        And creates "{root}/value1-value2/test_id" as prefix path (excl timestamps).
-    """
-
-    def params_to_parts(bound_arguments: dict, identifier: str) -> list[str]:
-        prefix_path = template.format(
-            **{
-                key: _value_to_path_fragment(value)
-                for key, value in bound_arguments.items()
-            },
-            identifier=_escape_path_fragment(identifier),
-        )
-        parts = prefix_path.split("/")
-        unquoted_parts = [urllib.parse.unquote(part) for part in parts]
-        return [unquoted_part for unquoted_part in unquoted_parts]
-
-    return params_to_parts
-
-
-def cache(
-    f=None,
-    *,
-    path_schema: typing.Callable[[dict, dict], list[str]],
-    root: str = None,
-    force_format: typing.Literal["json", "pkl", "pt"] | None = None,
-):
-    """Cache the result of a function call.
-
-    Example:
-        @cache(path_schema=template_schema("{arg1}-{arg2}/{identifier}"))
-        def my_func(arg1, arg2):
-            return arg1 + arg2
-
-        my_func automatically caches the result of the function call based on the arguments and identifier and loads from cache when possible.
-
-        my_func.get_prefix_path(..., __timestmap=...) with the same args and kwargs returns the given prefix path (and __timestamp specifies the timestamp to use).
-        my_func.load(..., __timestamp=...) tries to load from the cache or fail
-        my_func.recompute(...) computes and writes to the cache regardless of prior results
-
-        my_func(..., __force_refresh=True) is the same as .recompute but this makes it easy to force a refresh from the commandline when using e.g. Typer.
-    """
-    if f is None:
-        return functools.partial(
-            cache, path_schema=path_schema, root=root, force_format=force_format
-        )
-
-    if root is None:
-        root = os.path.join(blackhc.project.project_dir, "cache")
-
-    sig = inspect.signature(f)
-
-    def _get_cache_path(args, kwargs, timestamp: Timestamp | str | datetime):
-        # Apply defaults
-        bound_args = sig.bind(*args, **kwargs)
-        bound_args.apply_defaults()
-        
-        bound_arguments = bound_args.arguments
-        # Iterate over all arguments and replace with object identifiers if available
-        for key, value in bound_arguments.items():
-            if value in object_identities:
-                bound_arguments[key] = object_identities[value]
-
-        parts = path_schema(bound_args.arguments, _get_callable_full_name(f))
-        return get_prefix_path(*parts, root=root, timestamp=timestamp)
-
-    @functools.wraps(f)
-    def f_get_prefix_path(
-        *args, timestamp: Timestamp | str | datetime = Timestamp.NONE, **kwargs
+    def cache(
+        self,
+        path_spec: PathSpec | str,
+        *,
+        fmt: Literal["json", "pkl", "pt", "auto"] = "auto",
     ):
-        return _get_cache_path(args, kwargs, timestamp)
+        """
+        Decorator to cache function results based on arguments.
 
-    @functools.wraps(f)
-    def f_load(
-        *args, __timestamp: Timestamp | str | datetime = Timestamp.LATEST, **kwargs
-    ):
-        assert __timestamp != Timestamp.NOW
-        cache_path = _get_cache_path(args, kwargs, timestamp=__timestamp)
-        result = load(root=cache_path)
-        print(f"📦 Loaded from cache in {cache_path}")
-        return result
+        Args:
+            path_spec: PathSpec or template string (converted to PathSpec)
+            fmt: Forced format, or "auto" to detect
 
-    @functools.wraps(f)
-    def f_recompute(*args, **kwargs):
-        cache_path = _get_cache_path(args, kwargs, timestamp=Timestamp.NOW)
-        result = f(*args, **kwargs)
+        Example:
+            @storage.cache(template("{dataset}/{model}/{identifier}"))
+            def train(dataset: str, model: str, epochs: int = 10):
+                # epochs automatically included in path suffix
+                return expensive_computation()
 
-        match force_format:
-            case "json":
-                save_fn = save_json
-            case "pkl":
-                save_fn = save_pkl
-            case "pt":
-                save_fn = save_pt
-            case None:
-                if torch is not None and isinstance(result, torch.Tensor):
-                    save_fn = save_pt
-                else:
-                    save_fn = save_pkl_or_json
-            case _:
-                raise ValueError(f"Unsupported force_format: {force_format}")
+            result = train("mnist", "cnn", epochs=20)  # Compute & cache
+            result = train("mnist", "cnn", epochs=20)  # Load from cache
+            result = train("mnist", "cnn", _force_refresh=True)  # Force recompute
+            result = train.load("mnist", "cnn")  # Load directly
+            result = train.recompute("mnist", "cnn")  # Force recompute
+        """
+        if isinstance(path_spec, str):
+            path_spec = template(path_spec)
 
-        cache_path, _ = save_fn(result, root=cache_path)
-        print(f"📦 Cached result in {cache_path}")
-        return result
+        def decorator(fn: Callable[..., T]) -> Callable[..., T]:
+            sig = inspect.signature(fn)
+            identifier = fn.__qualname__
 
-    @functools.wraps(f)
-    def f_wrapper(
-        *args,
-        __force_refresh: bool = False,
-        **kwargs,
-    ):
-        if not __force_refresh:
-            try:
-                result = f_load(*args, **kwargs, __timestamp=Timestamp.LATEST)
+            def _build_parts(args: tuple, kwargs: dict) -> list:
+                bound = sig.bind(*args, **kwargs)
+                bound.apply_defaults()
+                return path_spec.build(
+                    bound.arguments,
+                    identifier,
+                    self.identity_registry,
+                )
+
+            @functools.wraps(fn)
+            def wrapper(*args, _force_refresh: bool = False, **kwargs) -> T:
+                parts = _build_parts(args, kwargs)
+
+                if not _force_refresh:
+                    try:
+                        result = self.load(*parts, version=True)
+                        if self.verbose:
+                            print("📦 Loaded from cache")
+                        return result
+                    except FileNotFoundError:
+                        pass
+
+                result = fn(*args, **kwargs)
+                path, _ = self.save(result, *parts, version=True, fmt=fmt)
+                if self.verbose:
+                    print(f"📦 Cached to {path}")
                 return result
-            except FileNotFoundError:
-                pass
 
-        return f_recompute(*args, **kwargs)
+            new_params = [
+                *sig.parameters.values(),
+                inspect.Parameter(
+                    "_force_refresh",
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=False,
+                ),
+            ]
+            wrapper.__signature__ = sig.replace(parameters=new_params)
 
-    new_wrapper_sig = sig.replace(
-        parameters=[
-            *sig.parameters.values(),
-            inspect.Parameter(
-                name="__force_refresh",
-                kind=inspect.Parameter.KEYWORD_ONLY,
-                default=False,
-            ),
-        ]
-    )
-    f_wrapper.__signature__ = new_wrapper_sig
+            def load_cached(
+                *args, _version: bool | str | datetime = True, **kwargs
+            ) -> T:
+                parts = _build_parts(args, kwargs)
+                return self.load(*parts, version=_version)
 
-    new_load_sig = sig.replace(
-        parameters=[
-            *sig.parameters.values(),
-            inspect.Parameter(
-                name="__timestamp",
-                kind=inspect.Parameter.KEYWORD_ONLY,
-                default=Timestamp.LATEST,
-            ),
-        ]
-    )
-    f_load.__signature__ = new_load_sig
+            load_params = [
+                *sig.parameters.values(),
+                inspect.Parameter(
+                    "_version",
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=True,
+                ),
+            ]
+            load_cached.__signature__ = sig.replace(parameters=load_params)
 
-    f_wrapper.get_prefix_path = f_get_prefix_path
-    f_wrapper.load = f_load
-    f_wrapper.recompute = f_recompute
-    return f_wrapper
+            def recompute(*args, **kwargs) -> T:
+                parts = _build_parts(args, kwargs)
+                result = fn(*args, **kwargs)
+                self.save(result, *parts, version=True, fmt=fmt)
+                return result
+
+            def get_prefix_path(*args, _version=False, **kwargs) -> Path:
+                parts = _build_parts(args, kwargs)
+                return self.get_path(*parts, version=_version)
+
+            wrapper.load = load_cached
+            wrapper.recompute = recompute
+            wrapper.get_prefix_path = get_prefix_path
+
+            return wrapper
+
+        return decorator
