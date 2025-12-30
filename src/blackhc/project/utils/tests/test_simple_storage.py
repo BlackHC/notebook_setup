@@ -2,17 +2,15 @@ from pyfakefs import fake_filesystem
 from blackhc.project.utils import simple_storage
 from blackhc.project.utils.simple_storage import (
     Storage,
-    template,
+    prefix_schema,
     identify,
     ObjectIdentityRegistry,
     _format_value,
-    _format_kwargs_fragment,
+    _format_kvs,
     _collect_metadata,
 )
-import os
 import pytest
 import enum
-import json
 
 
 class _TestObject:
@@ -71,17 +69,17 @@ def test_format_value_with_int_enum():
 
 
 def test_format_kwargs_fragment():
-    assert _format_kwargs_fragment({"key": "value"}) == "key:value"
+    assert _format_kvs({"key": "value"}) == "key:value"
     assert (
-        _format_kwargs_fragment({"key1": "value1", "key2": "value2"})
+        _format_kvs({"key1": "value1", "key2": "value2"})
         == "key1:value1_key2:value2"
     )
-    assert _format_kwargs_fragment({"key": 123}) == "key:123"
-    assert _format_kwargs_fragment({"key": None}) == "~key"
-    assert _format_kwargs_fragment({"key": 123.0}) == "key:123"
+    assert _format_kvs({"key": 123}) == "key:123"
+    assert _format_kvs({"key": None}) == "~key"
+    assert _format_kvs({"key": 123.0}) == "key:123"
     # None key is special-cased to just show the value
-    assert _format_kwargs_fragment({None: "value"}) == "value"
-    assert _format_kwargs_fragment({None: 123}) == "123"
+    assert _format_kvs({None: "value"}) == "value"
+    assert _format_kvs({None: 123}) == "123"
 
 
 # =============================================================================
@@ -285,7 +283,7 @@ def test_storage_verbose_prints(fs: fake_filesystem.FakeFilesystem, capsys):
 
     storage = Storage(root, verbose=True)
 
-    @storage.cache(template("{identifier}"))
+    @storage.cache(prefix_schema())
     def compute():
         return 42
 
@@ -307,7 +305,7 @@ def test_storage_verbose_false_no_prints(fs: fake_filesystem.FakeFilesystem, cap
 
     storage = Storage(root, verbose=False)
 
-    @storage.cache(template("{identifier}"))
+    @storage.cache(prefix_schema())
     def compute():
         return 42
 
@@ -381,7 +379,7 @@ def test_storage_cache_decorator(fs: fake_filesystem.FakeFilesystem):
     storage = Storage(root, verbose=False)
     counter = 0
 
-    @storage.cache(template("{arg1}/{identifier}"), fmt="json")
+    @storage.cache(prefix_schema("arg1"), fmt="json")
     def test_function(arg1, arg2):
         nonlocal counter
         counter += 1
@@ -425,7 +423,7 @@ def test_storage_cache_with_remaining_args(fs: fake_filesystem.FakeFilesystem):
 
     storage = Storage(root, verbose=False)
 
-    @storage.cache(template("{dataset}/{identifier}"))
+    @storage.cache(prefix_schema("dataset"))
     def train(dataset, model, epochs=10):
         return {"model": model, "epochs": epochs}
 
@@ -454,7 +452,7 @@ def test_storage_cache_with_object_identity(fs: fake_filesystem.FakeFilesystem):
     model_obj = _TestObject({"type": "resnet", "layers": 50})
     registry.identify(model_obj, "resnet50")
 
-    @storage.cache(template("{model}/{identifier}"))
+    @storage.cache(prefix_schema("model"))
     def evaluate(model, dataset):
         return {"accuracy": 0.95}
 
@@ -473,7 +471,7 @@ def test_cache_force_refresh(fs: fake_filesystem.FakeFilesystem):
     storage = Storage(root, verbose=False)
     counter = 0
 
-    @storage.cache(template("{identifier}"))
+    @storage.cache(prefix_schema())
     def compute():
         nonlocal counter
         counter += 1
@@ -501,7 +499,7 @@ def test_cache_load_with_version(fs: fake_filesystem.FakeFilesystem):
 
     storage = Storage(root, verbose=False)
 
-    @storage.cache(template("{identifier}"))
+    @storage.cache(prefix_schema("x"))
     def compute(x):
         return x * 2
 
@@ -531,40 +529,6 @@ def test_cache_load_with_version(fs: fake_filesystem.FakeFilesystem):
     assert loaded_latest == 10
 
 
-# =============================================================================
-# Template PathSpec Tests
-# =============================================================================
-
-
-def test_template_basic():
-    spec = template("{arg1}/{arg2}/{identifier}")
-    parts = spec.build({"arg1": "value1", "arg2": "value2"}, "my_func")
-
-    assert parts == ["value1", "value2", "my_func"]
-
-
-def test_template_with_remaining():
-    spec = template("{arg1}/{identifier}")
-    parts = spec.build(
-        {"arg1": "value1", "arg2": "value2", "arg3": "value3"}, "my_func"
-    )
-
-    # arg1 is used in template, arg2 and arg3 should be in remaining dict
-    assert parts[0] == "value1"
-    assert parts[1] == "my_func"
-    assert isinstance(parts[2], dict)
-    assert "arg2" in parts[2]
-    assert "arg3" in parts[2]
-
-
-def test_template_without_remaining():
-    spec = template("{arg1}/{identifier}", include_remaining=False)
-    parts = spec.build({"arg1": "value1", "arg2": "value2"}, "my_func")
-
-    # Only arg1 and identifier, no remaining
-    assert parts == ["value1", "my_func"]
-
-
 def test_collect_metadata(fs: fake_filesystem.FakeFilesystem):
     root = "/tmp/blackhc.project"
     fs.create_dir(root)
@@ -572,6 +536,183 @@ def test_collect_metadata(fs: fake_filesystem.FakeFilesystem):
     metadata = _collect_metadata(["test"])
     assert metadata.timestamp is not None
     assert metadata.path_parts == ["test"]
+
+
+# =============================================================================
+# PrefixPathSpec Tests
+# =============================================================================
+
+
+def test_prefix_schema_basic():
+    """Test basic prefix_schema with string args and separator."""
+    spec = prefix_schema("arg1", "arg2", "/", "arg3")
+    parts = spec.build(
+        {"arg1": "value1", "arg2": "value2", "arg3": "value3"}, "my_func"
+    )
+
+    # arg1 and arg2 grouped together, then separator, then arg3
+    assert len(parts) == 3
+    assert parts[0] == {"arg1": "value1", "arg2": "value2"}
+    assert parts[1] == {"arg3": "value3"}
+    assert parts[2] == "my_func"
+
+
+def test_prefix_schema_with_remaining():
+    """Test that unused args are added as suffix."""
+    spec = prefix_schema("arg1", "/", "arg2")
+    parts = spec.build(
+        {"arg1": "value1", "arg2": "value2", "arg3": "value3", "arg4": "value4"},
+        "my_func",
+    )
+
+    assert parts[0] == {"arg1": "value1"}
+    assert parts[1] == {"arg2": "value2"}
+    assert parts[2] == "my_func"
+    assert parts[3] == {"arg3": "value3", "arg4": "value4"}
+
+
+def test_prefix_schema_with_tuple():
+    """Test prefix_schema with tuple for explicit grouping."""
+    spec = prefix_schema(("arg1", "arg2"), "/", ("arg3",))
+    parts = spec.build(
+        {"arg1": "value1", "arg2": "value2", "arg3": "value3"}, "my_func"
+    )
+
+    assert len(parts) == 3
+    assert parts[0] == {"arg1": "value1", "arg2": "value2"}
+    assert parts[1] == {"arg3": "value3"}
+    assert parts[2] == "my_func"
+
+
+def test_prefix_schema_with_set():
+    """Test prefix_schema with set for explicit grouping."""
+    spec = prefix_schema({"arg1"}, "/", {"arg2"})
+    parts = spec.build({"arg1": "value1", "arg2": "value2"}, "my_func")
+
+    assert len(parts) == 3
+    assert parts[0] == {"arg1": "value1"}
+    assert parts[1] == {"arg2": "value2"}
+    assert parts[2] == "my_func"
+
+
+def test_prefix_schema_with_list():
+    """Test prefix_schema with list for value-only paths (no key names)."""
+    spec = prefix_schema(["arg1", "arg2"], "/", "arg3")
+    parts = spec.build(
+        {"arg1": "value1", "arg2": "value2", "arg3": "value3"}, "my_func"
+    )
+
+    # List creates a list of values (no keys)
+    assert parts[0] == ["value1", "value2"]
+    assert parts[1] == {"arg3": "value3"}
+    assert parts[2] == "my_func"
+
+
+def test_prefix_schema_mixed():
+    """Test prefix_schema with mixed arg types."""
+    spec = prefix_schema("dataset", "split", "/", ["model_type"], "/", ("epochs",))
+    parts = spec.build(
+        {
+            "dataset": "mnist",
+            "split": "train",
+            "model_type": "cnn",
+            "epochs": 100,
+            "lr": 0.01,
+        },
+        "train_fn",
+    )
+
+    assert parts[0] == {"dataset": "mnist", "split": "train"}
+    assert parts[1] == ["cnn"]
+    assert parts[2] == {"epochs": 100}
+    assert parts[3] == "train_fn"
+    assert parts[4] == {"lr": 0.01}
+
+
+def test_prefix_schema_no_remaining():
+    """Test prefix_schema when all args are used."""
+    spec = prefix_schema("arg1", "/", "arg2")
+    parts = spec.build({"arg1": "value1", "arg2": "value2"}, "my_func")
+
+    # No suffix dict when all args used
+    assert len(parts) == 3
+    assert parts[0] == {"arg1": "value1"}
+    assert parts[1] == {"arg2": "value2"}
+    assert parts[2] == "my_func"
+
+
+def test_prefix_schema_include_remaining_false():
+    """Test prefix_schema with include_remaining=False."""
+    spec = prefix_schema("arg1", "/", "arg2", include_remaining=False)
+    parts = spec.build(
+        {"arg1": "value1", "arg2": "value2", "arg3": "value3", "arg4": "value4"},
+        "my_func",
+    )
+
+    # Should NOT include arg3 and arg4 in suffix
+    assert len(parts) == 3
+    assert parts[0] == {"arg1": "value1"}
+    assert parts[1] == {"arg2": "value2"}
+    assert parts[2] == "my_func"
+
+
+def test_prefix_schema_with_object_identity():
+    """Test that prefix_schema resolves object identities."""
+    registry = ObjectIdentityRegistry()
+    obj = _TestObject({"complex": "data"})
+    registry.identify(obj, "simple_name")
+
+    spec = prefix_schema("model", "/", "dataset")
+    parts = spec.build({"model": obj, "dataset": "mnist"}, "my_func", registry)
+
+    assert parts[0] == {"model": "simple_name"}
+    assert parts[1] == {"dataset": "mnist"}
+
+
+def test_prefix_schema_invalid_arg():
+    """Test that invalid arg types raise ValueError."""
+    spec = prefix_schema("arg1", 123)  # 123 is invalid
+
+    with pytest.raises(ValueError, match="Invalid prefix arg"):
+        spec.build({"arg1": "value1"}, "my_func")
+
+
+def test_storage_cache_with_prefix_schema(fs: fake_filesystem.FakeFilesystem):
+    """Test @storage.cache with prefix_schema."""
+    root = "/tmp/storage_test"
+    fs.create_dir(root)
+
+    storage = Storage(root, verbose=False)
+    counter = 0
+
+    @storage.cache(prefix_schema("dataset", "/", "model"), fmt="json")
+    def train(dataset, model, epochs=10):
+        nonlocal counter
+        counter += 1
+        return {"result": f"{dataset}_{model}_{epochs}"}
+
+    assert counter == 0
+
+    # First call computes
+    result = train("mnist", "cnn", epochs=20)
+    assert result == {"result": "mnist_cnn_20"}
+    assert counter == 1
+
+    # Second call uses cache
+    cached_result = train("mnist", "cnn", epochs=20)
+    assert cached_result == result
+    assert counter == 1
+
+    # Different epochs should cache separately (epochs is in remaining args)
+    result2 = train("mnist", "cnn", epochs=30)
+    assert result2 == {"result": "mnist_cnn_30"}
+    assert counter == 2
+
+    # Check that path contains key:value format
+    path = train.get_prefix_path("mnist", "cnn", epochs=20)
+    path_str = str(path)
+    assert "dataset:mnist" in path_str
+    assert "model:cnn" in path_str
 
 
 if __name__ == "__main__":

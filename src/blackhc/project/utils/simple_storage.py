@@ -7,7 +7,7 @@ timestamps, wandb run info), and supports multiple serialization formats.
 
 Key Features
 ------------
-- Template-based path generation with automatic suffix for unlisted arguments
+- Prefix schema for key:value path segments (e.g., dataset:mnist_split:train/)
 - Object identity mapping for complex objects (models, datasets)
 - Versioning with timestamps
 - Auto-format detection (JSON, pickle, PyTorch)
@@ -15,7 +15,7 @@ Key Features
 
 Example Usage
 -------------
->>> from blackhc.project.utils.simple_storage import Storage, template, identify
+>>> from blackhc.project.utils.simple_storage import Storage, prefix_schema, identify
 >>>
 >>> storage = Storage("cache")
 >>>
@@ -23,15 +23,16 @@ Example Usage
 >>> storage.save(result, "experiments", {"model": "cnn", "epochs": 10})
 >>> result = storage.load("experiments", {"model": "cnn", "epochs": 10})
 >>>
->>> # With caching decorator - remaining args auto-appended to path
->>> @storage.cache(template("{dataset}/{identifier}"))
-... def train_model(dataset: str, model: str, epochs: int = 10):
+>>> # With prefix_schema - creates key:value path segments
+>>> @storage.cache(prefix_schema("dataset", "split", "/", "model"))
+... def compute_metrics(dataset: str, split: str, model: str, threshold: float = 0.5):
 ...     return {"accuracy": 0.95}
+>>> # Path: dataset:X_split:Y/model:Z/compute_metrics/threshold:0.5/
 >>>
->>> result = train_model("mnist", "cnn")  # Computes and caches
->>> result = train_model("mnist", "cnn")  # Loads from cache
->>> result = train_model("mnist", "cnn", _force_refresh=True)  # Force recompute
->>> result = train_model.load("mnist", "cnn")  # Load directly
+>>> result = compute_metrics("mnist", "train", "cnn")  # Computes and caches
+>>> result = compute_metrics("mnist", "train", "cnn")  # Loads from cache
+>>> result = compute_metrics("mnist", "train", "cnn", _force_refresh=True)  # Force recompute
+>>> result = compute_metrics.load("mnist", "train", "cnn")  # Load directly
 """
 
 from __future__ import annotations
@@ -42,7 +43,6 @@ import inspect
 import json
 import os
 import pickle
-import string
 import urllib.parse
 import weakref
 from dataclasses import asdict, dataclass, field
@@ -75,7 +75,7 @@ T = TypeVar("T")
 # =============================================================================
 
 
-def _escape_path_fragment(part: str) -> str:
+def _escape(part: str) -> str:
     """Escape a path part for filesystem safety."""
     return urllib.parse.quote(part, safe=" +(,){:}[]%")
 
@@ -89,35 +89,33 @@ def _format_value(value: Any) -> str:
         value = int(value)
 
     match value:
-        case bool():
-            return str(value)
-        case int():
-            return str(value)
+        case bool() | int() | str():
+            value = str(value)
         case float():
-            return format(value, ".6g")
-        case str():
-            return _escape_path_fragment(value)
+            value = format(value, ".6g")
         case enum.Enum():
-            return value.value if isinstance(value.value, str) else value.name
+            value = value.value if isinstance(value.value, str) else value.name
         case list():
             inner = ",".join(_format_value(v) for v in value)
-            return f"[{inner}]"
+            value = f"[{inner}]"
         case tuple():
             inner = ",".join(_format_value(v) for v in value)
-            return f"({inner})"
+            value = f"({inner})"
         case set() | frozenset():
             sorted_values = sorted(_format_value(v) for v in value)
-            return "{" + ",".join(sorted_values) + "}"
+            value = "{" + ",".join(sorted_values) + "}"
         case dict():
-            pairs = [_format_kwarg(k, v) for k, v in value.items()]
-            return "{" + ",".join(pairs) + "}"
+            pairs = [_format_kv(k, v) for k, v in value.items()]
+            value = "{" + ",".join(pairs) + "}"
         case _:
             raise TypeError(
                 f"Cannot format value of type {type(value).__name__}: {value!r}"
             )
+    
+    return _escape(value)
 
 
-def _format_kwarg(key: Any, value: Any) -> str:
+def _format_kv(key: Any, value: Any) -> str:
     """Format a key=value pair for path."""
     formatted_key = _format_value(key)
     if value is None:
@@ -127,30 +125,25 @@ def _format_kwarg(key: Any, value: Any) -> str:
     return f"{formatted_key}:{_format_value(value)}"
 
 
-def _format_kwargs_fragment(kwargs: dict[Any, Any]) -> str:
+def _format_kvs(kwargs: dict[Any, Any]) -> str:
     """Format a dict of kwargs as underscore-separated pairs."""
-    kwarg_fragments = []
+    kvs = []
     for key, value in kwargs.items():
         # Special case: None key is shortened.
         if key is None:
-            kwarg_fragments.append(_format_value(value))
+            kvs.append(_format_value(value))
         else:
-            kwarg_fragments.append(_format_kwarg(key, value))
-    return _list_to_path_fragment(kwarg_fragments)
-
-
-def _list_to_path_fragment(args: list) -> str:
-    """Convert a list of arguments to a path fragment."""
-    return "_".join(_format_value(v) for v in args)
+            kvs.append(_format_kv(key, value))
+    return "_".join(kvs)
 
 
 def _format_arg(arg: Any) -> str:
     if arg is None:
         return "__"
     elif isinstance(arg, dict):
-        return _format_kwargs_fragment(arg)
+        return _format_kvs(arg)
     elif isinstance(arg, list):
-        return _list_to_path_fragment(arg)
+        return "_".join(_format_value(v) for v in arg)
     else:
         return _format_value(arg)
 
@@ -257,14 +250,14 @@ def _collect_metadata(parts: list[str]) -> Metadata:
 
 
 @dataclass
-class PathSpec:
+class PrefixPathSpec:
     """
-    Specifies how to build a cache path from function arguments.
+    Specifies how to build a cache path from function arguments using prefix groups.
 
-    Use template() to create instances.
+    Use prefix_schema() to create instances.
     """
 
-    template: str
+    prefix_args: tuple[str | list | set | tuple, ...]
     include_remaining: bool = True
 
     def build(
@@ -272,8 +265,9 @@ class PathSpec:
         bound_args: dict[str, Any],
         identifier: str,
         identity_registry: ObjectIdentityRegistry | None = None,
-    ) -> list[str | dict]:
-        """Build path parts from bound arguments."""
+    ) -> list[str | dict | list]:
+        """Build path parts from bound arguments using prefix schema."""
+        # Resolve object identities
         resolved_args = {}
         for key, value in bound_args.items():
             if identity_registry and value in identity_registry:
@@ -281,54 +275,106 @@ class PathSpec:
             else:
                 resolved_args[key] = value
 
-        format_dict = {k: _format_arg(v) for k, v in resolved_args.items()}
-        format_dict["identifier"] = _escape_path_fragment(identifier)
+        parts: list[str | dict | list] = []
+        prefix_dict: dict[str, Any] = {}
+        used_args: set[str] = set()
 
-        try:
-            formatted = self.template.format(**format_dict)
-        except KeyError as e:
-            raise ValueError(f"Template references unknown argument: {e}") from e
+        for arg in self.prefix_args:
+            if arg == "/":
+                if prefix_dict:
+                    parts.append(prefix_dict)
+                    prefix_dict = {}
+            elif isinstance(arg, str):
+                prefix_dict[arg] = resolved_args[arg]
+                used_args.add(arg)
+            elif isinstance(arg, (set, tuple)):
+                if prefix_dict:
+                    parts.append(prefix_dict)
+                    prefix_dict = {}
+                for key in arg:
+                    prefix_dict[key] = resolved_args[key]
+                    used_args.add(key)
+                parts.append(prefix_dict)
+                prefix_dict = {}
+            elif isinstance(arg, list):
+                if prefix_dict:
+                    parts.append(prefix_dict)
+                    prefix_dict = {}
 
-        parts: list[str | dict] = [
-            urllib.parse.unquote(p) for p in formatted.split("/") if p
-        ]
+                prefix_list = []
+                for key in arg:
+                    prefix_list.append(resolved_args[key])
+                    used_args.add(key)
+                parts.append(prefix_list)
+            else:
+                raise ValueError(f"Invalid prefix arg: {arg}")
+
+        if prefix_dict:
+            parts.append(prefix_dict)
+
+        parts.append(identifier)
 
         if self.include_remaining:
-            formatter = string.Formatter()
-            used_keys = {
-                field_name.split(".")[0].split("[")[0]
-                for _, field_name, _, _ in formatter.parse(self.template)
-                if field_name is not None
+            suffix_dict = {
+                arg: resolved_args[arg]
+                for arg in resolved_args
+                if arg not in used_args
             }
-            if "identifier" not in used_keys:
-                parts.append(format_dict["identifier"])
-                used_keys.add("identifier")
-
-            remaining = {k: v for k, v in format_dict.items() if k not in used_keys}
-            if remaining:
-                parts.append(remaining)
+            if suffix_dict:
+                parts.append(suffix_dict)
 
         return parts
 
 
-def template(spec: str, *, include_remaining: bool = True) -> PathSpec:
+def prefix_schema(
+    *prefix_args: str | list | set | tuple, include_remaining: bool = True
+) -> PrefixPathSpec:
     """
-    Create a path specification from a template string.
+    Build a path schema from prefix arguments.
+
+    Any "/" in the prefix args is treated as a separator between different parts
+    of the path. Arguments are grouped into dicts (for key:value pairs) or lists.
 
     Args:
-        spec: Format string with {arg} placeholders and optional {identifier}
-        include_remaining: If True (default), args not in template are appended as suffix
+        *prefix_args: Sequence of:
+            - str: argument name to include in current dict group
+            - "/": separator to start a new path segment
+            - set/tuple: group of keys to include as their own dict segment
+            - list: group of keys whose values form a list segment
+        include_remaining: If True (default), args not in prefix_args are appended
+            as a suffix dict. If False, only explicitly listed args are included.
 
-    Examples:
-        # Remaining args auto-appended
-        template("{dataset}/{model}/{identifier}")
-        # With dataset="mnist", model="cnn", epochs=10:
-        # -> "mnist/cnn/my_func/epochs:10/"
+    Returns:
+        PrefixPathSpec that can be used with @storage.cache()
 
-        # Only use listed args
-        template("{dataset}/{identifier}", include_remaining=False)
+    Example:
+        >>> schema = prefix_schema("dataset", "split", "/", "model")
+        >>> parts = schema.build(
+        ...     {"dataset": "mnist", "split": "train", "model": "cnn", "epochs": 10},
+        ...     "my_func"
+        ... )
+        >>> # parts = [{"dataset": "mnist", "split": "train"}, {"model": "cnn"},
+        >>> #          "my_func", {"epochs": 10}]
+        >>> # Creates path: dataset:mnist_split:train/model:cnn/my_func/epochs:10/
+
+        >>> @storage.cache(prefix_schema("dataset", "/", "model"))
+        ... def train(dataset: str, model: str, epochs: int = 10):
+        ...     return result
+        >>> # Path: dataset:mnist/model:cnn/train/epochs:10/
+
+        Using tuples/sets for explicit grouping:
+        >>> schema = prefix_schema(("dataset", "split"), "/", ("model",))
+        >>> # Same as above but more explicit about boundaries
+
+        Using lists for value-only paths (no key names):
+        >>> schema = prefix_schema(["dataset", "split"], "/", "model")
+        >>> # Creates path: mnist_train/model:cnn/my_func/epochs:10/
+
+        Without remaining args:
+        >>> schema = prefix_schema("dataset", "/", "model", include_remaining=False)
+        >>> # Only dataset and model in path, other args ignored
     """
-    return PathSpec(template=spec, include_remaining=include_remaining)
+    return PrefixPathSpec(prefix_args=prefix_args, include_remaining=include_remaining)
 
 
 # =============================================================================
@@ -371,10 +417,6 @@ class Storage:
         self.identity_registry = identity_registry or object_identities
         self.verbose = verbose
 
-    def _parts_to_path(self, *parts: str | dict | list | None) -> str:
-        """Convert parts to a path string."""
-        return "/".join(_format_value(part) for part in parts if part) + "/"
-
     def get_path(
         self,
         *parts: str | dict | list | None,
@@ -389,7 +431,8 @@ class Storage:
                      str/datetime=explicit version
             for_save: If True, version=True means new timestamp; if False, means latest
         """
-        base = self.root / self._parts_to_path(*parts)
+        nonempty_parts = [_format_value(part) for part in parts if part]
+        base = self.root.joinpath(*nonempty_parts)
 
         if version is False:
             return base
@@ -564,7 +607,7 @@ class Storage:
 
     def cache(
         self,
-        path_spec: PathSpec | str,
+        path_spec: PrefixPathSpec,
         *,
         fmt: Literal["json", "pkl", "pt", "auto"] = "auto",
     ):
@@ -572,11 +615,11 @@ class Storage:
         Decorator to cache function results based on arguments.
 
         Args:
-            path_spec: PathSpec or template string (converted to PathSpec)
+            path_spec: PrefixPathSpec created via prefix_schema()
             fmt: Forced format, or "auto" to detect
 
         Example:
-            @storage.cache(template("{dataset}/{model}/{identifier}"))
+            @storage.cache(prefix_schema("dataset", "/", "model"))
             def train(dataset: str, model: str, epochs: int = 10):
                 # epochs automatically included in path suffix
                 return expensive_computation()
@@ -587,8 +630,6 @@ class Storage:
             result = train.load("mnist", "cnn")  # Load directly
             result = train.recompute("mnist", "cnn")  # Force recompute
         """
-        if isinstance(path_spec, str):
-            path_spec = template(path_spec)
 
         def decorator(fn: Callable[..., T]) -> Callable[..., T]:
             sig = inspect.signature(fn)
