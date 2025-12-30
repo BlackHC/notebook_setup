@@ -12,16 +12,22 @@ Key Features
 - Versioning with timestamps
 - Auto-format detection (JSON, pickle, PyTorch)
 - Caching decorator with `.load()` and `.recompute()` accessors
+- Direct path loading with `load_from_path()` and `load_metadata_from_path()`
 
 Example Usage
 -------------
->>> from blackhc.project.utils.simple_storage import Storage, prefix_schema, identify
+>>> from blackhc.project.utils.simple_storage import (
+...     Storage, prefix_schema, identify, load_from_path
+... )
 >>>
 >>> storage = Storage("cache")
 >>>
 >>> # Direct save/load
 >>> storage.save(result, "experiments", {"model": "cnn", "epochs": 10})
 >>> result = storage.load("experiments", {"model": "cnn", "epochs": 10})
+>>>
+>>> # Load from a known path
+>>> data = load_from_path("cache/experiments/model:cnn/2024-01-01T12:00:00")
 >>>
 >>> # With prefix_schema - creates key:value path segments
 >>> @storage.cache(prefix_schema("dataset", "split", "/", "model"))
@@ -401,7 +407,7 @@ class Storage:
         result = storage.load("mnist", {"model": "cnn", "epochs": 10})
 
         # With decorator
-        @storage.cache(template("{dataset}/{identifier}"))
+        @storage.cache(prefix_schema("dataset", "/", "model"))
         def train(dataset: str, model: str, epochs: int = 10):
             return expensive_computation()
     """
@@ -706,3 +712,47 @@ class Storage:
             return wrapper
 
         return decorator
+
+
+# =============================================================================
+# Convenience Functions
+# =============================================================================
+
+
+def load_from_path(path: str | Path) -> Any:
+    """
+    Load data directly from a storage directory path.
+
+    Convenience function for loading from a known path without creating
+    a Storage instance with parts.
+
+    Args:
+        path: Path to a storage directory containing data.* and meta.json
+
+    Returns:
+        The loaded object
+
+    Example:
+        data = load_from_path("cache/experiments/model:cnn/2024-01-01T12:00:00")
+    """
+    return Storage(path, verbose=False).load()
+
+
+def load_metadata_from_path(path: str | Path) -> Metadata:
+    """
+    Load metadata directly from a storage directory path.
+
+    Convenience function for loading metadata from a known path without
+    loading the full data.
+
+    Args:
+        path: Path to a storage directory containing meta.json
+
+    Returns:
+        Metadata object
+
+    Example:
+        metadata = load_metadata_from_path("cache/experiments/model:cnn/2024-01-01T12:00:00")
+        print(metadata.timestamp, metadata.git_commit)
+    """
+    return Storage(path, verbose=False).load_metadata()

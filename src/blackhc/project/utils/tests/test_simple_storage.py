@@ -4,6 +4,8 @@ from blackhc.project.utils.simple_storage import (
     Storage,
     prefix_schema,
     identify,
+    load_from_path,
+    load_metadata_from_path,
     ObjectIdentityRegistry,
     _format_value,
     _format_kvs,
@@ -713,6 +715,63 @@ def test_storage_cache_with_prefix_schema(fs: fake_filesystem.FakeFilesystem):
     path_str = str(path)
     assert "dataset:mnist" in path_str
     assert "model:cnn" in path_str
+
+
+# =============================================================================
+# Convenience Function Tests
+# =============================================================================
+
+
+def test_load_from_path(fs: fake_filesystem.FakeFilesystem):
+    """Test load_from_path convenience function."""
+    root = "/tmp/storage_test"
+    fs.create_dir(root)
+
+    storage = Storage(root, verbose=False)
+    test_obj = {"key": "value", "number": 42}
+
+    # Save some data
+    path, _ = storage.save(test_obj, "experiments", {"model": "cnn"})
+
+    # Load using the convenience function (path.parent is the storage dir)
+    loaded = load_from_path(path.parent)
+    assert loaded == test_obj
+
+
+def test_load_metadata_from_path(fs: fake_filesystem.FakeFilesystem):
+    """Test load_metadata_from_path convenience function."""
+    root = "/tmp/storage_test"
+    fs.create_dir(root)
+
+    storage = Storage(root, verbose=False)
+    test_obj = {"key": "value"}
+
+    # Save some data
+    path, _ = storage.save(test_obj, "experiments", {"model": "cnn"})
+
+    # Load metadata using the convenience function
+    metadata = load_metadata_from_path(path.parent)
+    assert metadata.timestamp is not None
+    assert metadata.path_parts == ["experiments", {"model": "cnn"}]
+
+
+def test_load_from_path_with_version(fs: fake_filesystem.FakeFilesystem):
+    """Test load_from_path with versioned storage."""
+    root = "/tmp/storage_test"
+    fs.create_dir(root)
+
+    storage = Storage(root, verbose=False)
+
+    # Save with versioning
+    path1, _ = storage.save({"v": 1}, "test", version=True)
+    path2, _ = storage.save({"v": 2}, "test", version=True)
+
+    # Load specific versions using their paths
+    loaded1 = load_from_path(path1.parent)
+    loaded2 = load_from_path(path2.parent)
+
+    assert loaded1 == {"v": 1}
+    assert loaded2 == {"v": 2}
 
 
 if __name__ == "__main__":
